@@ -37,7 +37,7 @@ VignetteBuilder: knitr
 BugReports: https://github.com/TimothyMerlin/koma/issues
 Config/roxygen2/version: 8.0.0
 NeedsCompilation: no
-Packaged: 2026-10-01 08:50:37 UTC; tischere
+Packaged: 2026-10-01 14:43:27 UTC; tischere
 Author: Samad Sarferaz [aut, cph] (ORCID:
     <https://orcid.org/0000-0001-9283-3293>),
   Merlin Scherer [aut, cre, cph] (ORCID:
