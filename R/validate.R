@@ -1,0 +1,541 @@
+#' Validate that Endogenous Variables Are Declared Only Once
+#'
+#' An endogenous variable may be defined by exactly one equation: either a
+#' stochastic equation (`~`) or an identity (`==`), never both, and never
+#' twice. This is checked eagerly, right after `endogenous_variables` is
+#' derived from `equations` and before the gamma/beta matrices and identities
+#' are built from them, because a duplicate at that stage does not fail
+#' cleanly -- it produces mismatched matrix dimensions and surfaces later as
+#' an unrelated, low-level internal error deep in identity/weight
+#' construction.
+#'
+#' @param equations A character vector of equations, positionally aligned
+#' with `endogenous_variables` (i.e. `endogenous_variables[i]` is the LHS
+#' variable of `equations[i]`), as is the case right after
+#' [get_endogenous_variables()] has been applied to `equations`.
+#' @param endogenous_variables A character vector of endogenous variable
+#' names, as returned by [get_endogenous_variables()].
+#' @param call The environment from which the error is called.
+#'
+#' @return Invisibly `TRUE` if no conflicting or duplicate declarations are
+#' found.
+#' @keywords internal
+validate_unique_endogenous_variables <- function(equations, endogenous_variables,
+                                                  call = rlang::caller_env()) {
+  duplicated_vars <- unique(endogenous_variables[duplicated(endogenous_variables)])
+
+  if (length(duplicated_vars) == 0) {
+    return(invisible(TRUE))
+  }
+
+  for (var in duplicated_vars) {
+    conflicting_equations <- equations[endogenous_variables == var]
+    is_stochastic <- grepl("~", conflicting_equations)
+
+    if (any(is_stochastic) && any(!is_stochastic)) {
+      cli::cli_abort(
+        c(
+          "!" = "{.val {var}} is declared as both a stochastic equation and an identity.",
+          "x" = paste(conflicting_equations, collapse = " and "),
+          "i" = "A variable can either be estimated with an error term
+          ({.code ~}) or defined exactly by an identity ({.code ==}), not both.",
+          ">" = "Remove one of the two equations for {.val {var}}."
+        ),
+        call = call
+      )
+    }
+  }
+
+  cli::cli_abort(
+    c(
+      "Declared endogenous variables are not unique.",
+      "x" = paste(duplicated_vars, collapse = ", "),
+      "i" = "Ensure that each endogenous variable is declared only once."
+    ),
+    call = call
+  )
+}
+
+#' Validate Equations
+#'
+#' This function validates a character vector of equations, ensuring that they
+#' adhere to a specific format.
+#' The equations should be in the format "left_variable==right_variables", where
+#' right variables can be separated by '+', '-', or '*'. The function checks for
+#' valid equation structure, valid variable names, no duplicate regressors in a
+#' single equation, and no duplicate dependent variables across all equations.
+#'
+#' @return Returns object.
+#' @keywords internal
+validate_system_of_equations <- function(x) {
+  stopifnot(is_system_of_equations(x))
+
+  equations <- x$equations
+  endogenous_variables <- x$endogenous_variables
+  exogenous_variables <- x$exogenous_variables
+
+  # Check if all exogenous variables have been declared
+  variables <- get_variables(equations)
+  variables <- unlist(variables)
+
+  if (any(exogenous_variables %in% endogenous_variables)) {
+    stop(
+      "An exogenous variable cannot also be endogenous: ",
+      paste(
+        exogenous_variables[exogenous_variables %in% endogenous_variables],
+        collapse = ", "
+      )
+    )
+  }
+
+  if (length(grep("~", equations)) == 0) {
+    cli::cli_abort(c(
+      "No stochastic equation detected in the system of equations.",
+      "i" = "Ensure that at least one equation uses the '~' syntax to ",
+      "indicate a stochastic relationship.",
+      "For example: 'Y ~ X'."
+    ))
+  }
+
+  # Check for duplicate endogenous or exogenous
+  duplicated_endogenous <- endogenous_variables[duplicated(endogenous_variables)]
+  if (length(duplicated_endogenous) > 0) {
+    cli::cli_abort(c(
+      "Declared endogenous variables are not unique.",
+      "x" = paste(duplicated_endogenous, collapse = ", "),
+      "i" = "Ensure that each endogenous variable is declared only once."
+    ))
+  }
+
+  duplicated_exogenous <- exogenous_variables[duplicated(exogenous_variables)]
+  if (length(duplicated_exogenous) > 0) {
+    stop(
+      "Declared exogenous variables are not unique. Duplicates: ",
+      paste(unique(duplicated_exogenous), collapse = ", ")
+    )
+  }
+
+  # Check for duplicate dependent variables
+  left_vars_all <- unlist(lapply(
+    equations,
+    function(equation) unlist(strsplit(equation, "=="))[1]
+  ))
+  if (length(left_vars_all) != length(unique(left_vars_all))) {
+    stop("Duplicate dependent variables found.")
+  }
+
+  validate_identity_lag_collinearity(
+    x$identities, x$predetermined_variables,
+    call = rlang::caller_env()
+  )
+
+  return(TRUE)
+}
+
+#' Validate that Lagged Identities Are Not Collinear with Their Components
+#'
+#' An identity holds exactly (no error term), so for any lag `k`,
+#' `identity.L(k)` is an exact linear combination of `component_1.L(k), ...,
+#' component_n.L(k)`. If `identity.L(k)` is used as a predetermined variable
+#' in one equation while *every* one of its components is *also* lagged by
+#' `k` somewhere else in the system, the resulting `x_matrix` is guaranteed
+#' to be rank-deficient -- independent of the data. Because this only depends
+#' on the equation specification (which variables are components of which
+#' identity, and which lags are used where), it can be, and is, checked
+#' eagerly here rather than deferred to estimation time.
+#'
+#' Identities with dynamic (data-derived) weights are skipped: their weights
+#' can vary over time, so the exact dependency cannot be guaranteed from the
+#' specification alone. [validate_full_rank()] still catches those
+#' numerically once data is available.
+#'
+#' @param identities A list of identities, as returned by [get_identities()].
+#' @param predetermined_variables A character vector of lagged variable
+#' names, as returned by [parse_lags()].
+#' @param call The environment from which the error is called.
+#' @keywords internal
+validate_identity_lag_collinearity <- function(identities, predetermined_variables,
+                                               call = rlang::caller_env()) {
+  for (id in names(identities)) {
+    weights <- identities[[id]]$weights
+    if (!all(vapply(weights, is.numeric, logical(1)))) {
+      next # dynamic (data-derived) weights: cannot verify symbolically
+    }
+
+    components <- names(identities[[id]]$components)
+    lag_pattern <- paste0("^", id, "\\.L\\((\\d+)\\)$")
+    id_lags <- predetermined_variables[grepl(lag_pattern, predetermined_variables)]
+
+    for (id_lag in id_lags) {
+      lag <- sub(lag_pattern, "\\1", id_lag)
+      component_lags <- paste0(components, ".L(", lag, ")")
+
+      if (all(component_lags %in% predetermined_variables)) {
+        cli::cli_abort(
+          c(
+            "!" = "{.val {id_lag}} is exactly collinear with
+            {.val {component_lags}}.",
+            "x" = "{.val {id}} is an identity ({.code {identities[[id]]$equation}}), which
+            holds exactly, so its lag is an exact linear combination of the same lags of
+            its components.",
+            "i" = "Both {.val {id_lag}} and {.val {component_lags}} are used as
+            predetermined variables in this system.",
+            ">" = "Remove one of the dependent variables, or avoid lagging both the
+            identity and its components."
+          ),
+          call = call
+        )
+      }
+    }
+  }
+
+  invisible(TRUE)
+}
+
+#' Validate Individual Equation
+#'
+#' This function validates an individual equation to ensure that it follows a
+#' specific structure. The expected format for the equation is "left_variable ==
+#' right_variables", where `right_variables` can be a combination of variables
+#' separated by '+', '-', or '*'. The function checks the following:
+#' - Validity of the variable names.
+#' - Correct structure (exactly one '==' separator).
+#' - Stochastic error term `epsilon` must be the last element.
+#' - Duplicate regressors within a single equation are not allowed.
+#'
+#' @param equation A character string representing an equation in the format
+#' "left_variable == right_variables".
+#'
+#' @return Logical. Returns `TRUE` if the equation is valid.
+#' Throws an error with a specific message if any checks fail.
+#' @keywords internal
+validate_equation <- function(equation) {
+  parts <- unlist(strsplit(equation, "==|~"))
+  if (length(parts) != 2) {
+    cli::cli_abort("Invalid equation structure: {equation}")
+  }
+
+  error_msg <- function(var, msg) {
+    cli::cli_abort(c(
+      "!" = "In Equation: {equation}. Invalid variable: {var}.",
+      "i" = "Reason: {msg}"
+    ))
+  }
+
+  left_var <- trimws(parts[1])
+  if (!is_valid_var(left_var)) {
+    error_msg(left_var, "Left side variable is invalid")
+  }
+
+  right_vars <- strsplit(parts[2], "[\\+\\-]")[[1]]
+  right_vars <- lapply(right_vars, function(v) {
+    list(
+      original = trimws(v),
+      split = unlist(strsplit(v, "[\\*]"))
+    )
+  })
+
+  lapply(right_vars, function(rv) {
+    validate_var_term(rv, error_msg)
+  })
+
+  # Reject an un-lagged self reference to the equation's own dependent
+  # variable, e.g. "gdp ~ gdp + x1". construct_gamma_matrix() excludes the
+  # equation's own endogenous variable when matching RHS terms against
+  # endogenous variables, so a bare self reference like this matches nothing
+  # and is silently dropped from the gamma/beta matrices instead of erroring.
+  # This is almost always a typo for a lagged self reference like
+  # "gdp.L(1)".
+  left_var_base <- gsub("\\([^)]*\\)\\*", "", left_var)
+  lapply(right_vars, function(rv) {
+    var_name <- rv$split[length(rv$split)]
+    if (identical(var_name, left_var_base)) {
+      error_msg(
+        rv$original,
+        paste0(
+          "Equation for '", left_var_base, "' references itself on the ",
+          "right-hand side without a lag; did you mean '", left_var_base,
+          ".L(1)'?"
+        )
+      )
+    }
+  })
+
+  canon <- sapply(right_vars, function(rv) {
+    gsub("\\s+", "", rv$original)
+  })
+  if (length(unique(canon)) < length(canon)) {
+    cli::cli_abort("Duplicate regressors found in: {equation}")
+  }
+
+  TRUE
+}
+
+validate_var_term <- function(rv, error_msg) {
+  split <- rv$split
+  n_split <- length(split)
+
+  if (n_split == 0) {
+    return(TRUE)
+  } else if (n_split == 1) {
+    if (rv$original %in% c("1", "0")) {
+      return(invisible(TRUE))
+    }
+    if (!is_valid_var(split)) {
+      error_msg(rv$original, "Invalid single component variable")
+    }
+  } else if (n_split == 2) {
+    valid_expr <- grepl("^\\(.*\\)$", split[1])
+    valid_num <- grepl("^[0-9]+(?:\\.[0-9]+)?$", split[1])
+    if (!(valid_expr || valid_num)) {
+      error_msg(
+        rv$original,
+        "Weight must be a number or expression in parentheses"
+      )
+    }
+    if (!is_valid_var(split[2])) {
+      error_msg(
+        rv$original,
+        "Invalid variable name in weighted term"
+      )
+    }
+  } else {
+    error_msg(
+      rv$original,
+      "Invalid structure: too many components separated by '*'"
+    )
+  }
+}
+
+is_valid_var <- function(name) {
+  # Remove weight and prior syntax
+  name <- gsub("\\([^)]*\\)\\*", "", name)
+  name <- gsub("\\{[^}]*\\}", "", name)
+
+  # Pattern for standard syntax: var, var.L(1)
+  pattern1 <- "^[a-zA-Z][a-zA-Z0-9_]*(\\.L\\([0-9:,]+\\))?$"
+
+  # Pattern for lag() syntax, e.g. lag(investment,2:3)
+  pattern2 <- "^lag\\([[:space:]]*[a-zA-Z][a-zA-Z0-9_]*[[:space:]]*,[[:space:]]*"
+  pattern2 <- paste0(pattern2, "[0-9]+(:[0-9]+)?[[:space:]]*\\)$")
+
+  valid1 <- grepl(pattern1, name)
+  valid2 <- grepl(pattern2, name)
+  not_number <- !grepl("^[0-9]+$", name)
+
+  (valid1 | valid2) & not_number
+}
+
+#' Validate Completeness
+#'
+#' The function checks if all exogenous variables are declared.
+#'
+#' @inheritParams system_of_equations
+#'
+#' @return Logical. Returns `TRUE` if the equation is valid.
+#' Throws an error with a specific message if any checks fail.
+#' @keywords internal
+validate_completeness <- function(equations, exogenous_variables) {
+  # Check if all exogenous variables have been declared
+  variables <- get_variables(equations)
+  variables <- unlist(variables)
+
+  get_base_variable <- function(var) {
+    var <- trimws(var)
+    if (grepl("^lag\\(", var)) {
+      return(sub(
+        "^lag\\s*\\(\\s*([a-zA-Z][a-zA-Z0-9_]*)\\s*,.*",
+        "\\1", var
+      ))
+    } else if (grepl("\\.L\\(", var)) {
+      return(sub("^(.*?)\\.L\\(.*", "\\1", var))
+    } else {
+      return(var)
+    }
+  }
+
+  variables <- sapply(variables, get_base_variable)
+
+  missing_variables <- setdiff(
+    variables,
+    c(
+      "constant",
+      get_endogenous_variables(equations),
+      exogenous_variables
+    )
+  )
+  # Variables in parentheses are used in weight calculation
+  # Remove all variables in parentheses from missing
+  missing_variables <-
+    missing_variables[!grepl("^\\(.*\\)$", missing_variables)]
+  # Remove prior syntax
+  missing_variables <-
+    missing_variables[!grepl("^\\{[0-9.,]*\\}", missing_variables)]
+  # Remove lag
+  missing_variables <- missing_variables[
+    !grepl("\\.L\\(", missing_variables) &
+      !grepl("^lag\\(", missing_variables)
+  ]
+
+  if (length(missing_variables) != 0) {
+    cli::cli_abort(c(
+      "Undeclared exogenous variables detected:",
+      stats::setNames(missing_variables, rep("x", length(missing_variables)))
+    ))
+  }
+
+  # Check if there are redundant exogenous variables
+  redundant <- setdiff(
+    exogenous_variables,
+    variables
+  )
+
+  if (length(redundant) != 0) {
+    cli::cli_abort(c(
+      "Redundant exogenous variables detected:",
+      stats::setNames(redundant, rep("x", length(redundant)))
+    ))
+  }
+}
+
+validate_priors <- function(equation) {
+  parts <- unlist(strsplit(equation, "==|~"))
+  dependent_variable <- trimws(parts[1])
+
+  # Check if the dependent variable contains invalid characters
+  if (grepl("[{}()]", dependent_variable)) {
+    dependent_variable <- gsub("\\{", "{{", dependent_variable)
+    dependent_variable <- gsub("\\}", "}}", dependent_variable)
+    cli::cli_abort(c(
+      "Invalid dependent variable.",
+      "!" = paste0(
+        "Dependent variable '", dependent_variable,
+        "' must not include {{}} or ()."
+      ),
+      "i" = "Ensure the name is plain without special characters."
+    ))
+  }
+
+  rhs <- if (length(parts) >= 2) parts[2] else ""
+
+  # Every "{...}" on the right-hand side must contain exactly two
+  # comma-separated numbers (mean, variance) -- the same format
+  # extract_priors() itself parses, including a leading "-" and decimals
+  # without a leading digit (e.g. "-.4"). Brace groups are matched directly
+  # on the raw right-hand side (not via get_variables(), whose splitting
+  # regex treats "-" as a term separator and would tear a negative-mean
+  # prior like "{-0.4,0.1}" apart before it could ever be checked).
+  # Anything that isn't exactly two such numbers -- wrong separator, missing
+  # separator, extra values -- is rejected here with the offending brace
+  # group shown verbatim, rather than left to silently coerce to NA further
+  # down the pipeline.
+  brace_groups <- regmatches(rhs, gregexpr("\\{[^}]*\\}", rhs))[[1]]
+  number <- "-?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)"
+  valid_prior_pattern <- paste0("^\\{", number, ",", number, "\\}$")
+
+  invalid_groups <- brace_groups[!grepl(valid_prior_pattern, brace_groups)]
+  if (length(invalid_groups) > 0) {
+    invalid_groups <- gsub("\\{", "{{", invalid_groups)
+    invalid_groups <- gsub("\\}", "}}", invalid_groups)
+    cli::cli_abort(c(
+      "!" = "Invalid priors detected for these variables:",
+      "x" = invalid_groups
+    ))
+  }
+}
+
+#' Validate Forecast Restrictions
+#'
+#' Checks the structure of user-supplied forecast restrictions before any
+#' forecast draw is computed. Without this check, malformed restrictions only
+#' fail inside the individual draws, where density forecasts catch the errors
+#' per draw and report a misleading "All forecast draws failed".
+#'
+#' Restrictions for variables that are not endogenous are dropped with a single
+#' warning.
+#'
+#' @param restrictions `NULL` or a named list. Each element is a list with
+#' numeric `value` and `horizon` vectors of equal length.
+#' @param endogenous_variables Character vector of endogenous variable names.
+#' @param horizon Integer forecast horizon.
+#' @param call The environment from which the error is called.
+#'
+#' @return The restrictions without entries for non-endogenous variables.
+#' @keywords internal
+validate_restrictions <- function(restrictions, endogenous_variables, horizon,
+                                  call = rlang::caller_env()) {
+  if (is.null(restrictions) || identical(restrictions, list())) {
+    return(restrictions)
+  }
+
+  if (!is.list(restrictions) || is.data.frame(restrictions)) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.arg restrictions}:",
+      "x" = "Must be {.code NULL} or a named list, not {.obj_type_friendly {restrictions}}."
+    ), call = call)
+  }
+
+  variables <- names(restrictions)
+  if (is.null(variables) || anyNA(variables) || any(variables == "")) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.arg restrictions}:",
+      "x" = "Every restriction must be named after an endogenous variable."
+    ), call = call)
+  }
+  if (anyDuplicated(variables)) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.arg restrictions}:",
+      "x" = "Duplicate restrictions for {.val {unique(variables[duplicated(variables)])}}.",
+      "i" = "Combine them into one entry with vectors for {.field value} and {.field horizon}."
+    ), call = call)
+  }
+
+  for (variable in variables) {
+    restriction <- restrictions[[variable]]
+    if (!is.list(restriction) || !all(c("value", "horizon") %in% names(restriction))) {
+      cli::cli_abort(c(
+        "!" = "Invalid restriction for {.val {variable}}:",
+        "x" = "Must be a list with elements {.field value} and {.field horizon}."
+      ), call = call)
+    }
+
+    value <- restriction[["value"]]
+    hx <- restriction[["horizon"]]
+    if (!is.numeric(value) || !is.numeric(hx) ||
+      length(value) == 0L || length(value) != length(hx)) {
+      cli::cli_abort(c(
+        "!" = "Invalid restriction for {.val {variable}}:",
+        "x" = "{.field value} and {.field horizon} must be numeric vectors of the same, non-zero length."
+      ), call = call)
+    }
+    if (any(!is.finite(value)) || any(!is.finite(hx))) {
+      cli::cli_abort(c(
+        "!" = "Invalid restriction for {.val {variable}}:",
+        "x" = "{.field value} and {.field horizon} must not contain missing or infinite values."
+      ), call = call)
+    }
+    if (any(hx != round(hx)) || any(hx < 1) || any(hx > horizon)) {
+      cli::cli_abort(c(
+        "!" = "Invalid restriction for {.val {variable}}:",
+        "x" = "{.field horizon} must contain whole numbers between 1 and {horizon}."
+      ), call = call)
+    }
+    if (anyDuplicated(hx)) {
+      cli::cli_abort(c(
+        "!" = "Invalid restriction for {.val {variable}}:",
+        "x" = "{.field horizon} contains duplicates: {.val {unique(hx[duplicated(hx)])}}."
+      ), call = call)
+    }
+  }
+
+  unknown <- setdiff(variables, endogenous_variables)
+  if (length(unknown)) {
+    cli::cli_warn(c(
+      "x" = "Restriction(s) for variable(s) {.val {unknown}} ignored: not found among endogenous variables.",
+      "i" = "Please ensure all restriction names match endogenous variable names exactly. See ?forecast for details."
+    ))
+    restrictions <- restrictions[variables %in% endogenous_variables]
+  }
+
+  restrictions
+}

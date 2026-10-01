@@ -1,0 +1,957 @@
+#' Estimate the Simultaneous Equations Model (SEM)
+#'
+#' Estimate a system of simultaneous equations model (SEM) using a Bayesian
+#' approach. This function incorporates Gibbs sampling and allows for
+#' both density and point forecasts.
+#'
+#' @param ts_data Time-series data set for the estimation.
+#' @param sys_eq A `koma_seq` object ([system_of_equations]) containing details
+#' about the system of equations used in the model.
+#' @param dates Key-value list for date ranges in various model operations.
+#' @param ... Additional parameters.
+#' @param options Optional settings for estimation. Use
+#' \code{list(gibbs = list(), fill = list(method = "mean"))}. Elements:
+#' \itemize{
+#'   \item \code{gibbs}: Gibbs sampler settings (see
+#'   \link[=get_default_gibbs_spec]{Gibbs Sampler Specifications}).
+#'   \item \code{fill$method}: "mean" or "median" used to fill ragged edges
+#'   during estimation.
+#' }
+#' See \link[=get_default_gibbs_spec]{Gibbs Sampler Specifications}.
+#' @param estimates Optional. A `koma_estimate` object
+#' (see \code{\link{estimate}}) containing the estimates of the previously
+#' estimated simultaneous equations model. Use this parameter when some
+#' equations of the system need to be re-estimated.
+#'
+#' @section Parallel:
+#' This function provides the option for parallel computing through
+#' the `future::plan()` function.
+#' For a detailed example on executing `estimate` in parallel, see the vignette:
+#' \code{vignette("parallel")}.
+#' For more details, see the
+#' [future package documentation](https://CRAN.R-project.org/package=future).
+#'
+#' @inheritSection get_default_gibbs_spec Gibbs Sampler Specifications
+#'
+#' @details
+#' After estimation, use \code{\link[=summary.koma_estimate]{summary}} for a
+#' full table of posterior summaries (with optional credible intervals and
+#' texreg output) and \code{\link[=print.koma_estimate]{print}} for a concise
+#' console-friendly overview of the estimated system.
+#'
+#' @return An object of class `koma_estimate`.
+#'
+#' An object of class `koma_estimate`is a list containing the following
+#' elements:
+#' \describe{
+#'   \item{estimates}{The estimated parameters and other relevant information
+#'   obtained from the model.}
+#'   \item{sys_eq}{A `koma_seq` object containing details about the system of
+#'   equations used in the model.}
+#'   \item{ts_data}{The time-series data used for the estimation, with any `NA`
+#'   values removed and lagged variables created.}
+#'   \item{y_matrix}{The Y matrix constructed from the balanced data, used in
+#'   the estimation process.}
+#'   \item{x_matrix}{The X matrix constructed from the balanced data, used in
+#'   the estimation process.}
+#'   \item{gibbs_specifications}{The specifications used for the Gibbs
+#'   sampling.}
+#'   \item{dates}{The date ranges used during estimation.}
+#'   \item{plain_ts_names}{Character vector of series names that were
+#'   supplied as plain `ts` (not `koma_ts`) in `ts_data`. These are assumed to
+#'   already be in rates and tagged accordingly; see the "Plain ts input"
+#'   section below.}
+#' }
+#'
+#' @section Plain ts input:
+#' If any element of `ts_data` is a plain `ts` rather than a `koma_ts`
+#' (see \code{\link{ets}}), it is assumed to already be in rates, the
+#' form the model estimates on, and is converted to `koma_ts` with
+#' `series_type = "rate"`, `method = "none"`: the values are used as-is, no
+#' rate/level transformation is applied. A warning lists the affected
+#' series, and the same list is stored in the returned object as
+#' `plain_ts_names` (also surfaced when the `koma_estimate` is printed). If a
+#' series actually needs to be converted from levels (e.g. via a percentage
+#' or diff_log growth rate), convert it first with \code{\link{ets}} or
+#' \code{\link{as_ets}}; see \code{vignette("koma-extended-timeseries")}.
+#'
+#' `koma_ts` objects may carry custom attributes beyond `series_type`/
+#' `method` (e.g. a project-specific `value_type`). Since all series in
+#' `ts_data` must share the same attribute names (see \code{\link{as_mets}}),
+#' any such extra attributes found on sibling `koma_ts` series are set to
+#' `NA` on the converted series.
+#'
+#' @examples
+#' data("simulated_sem")
+#' set.seed(11)
+#'
+#' fit <- estimate(
+#'   ts_data = simulated_sem$ts_data,
+#'   sys_eq = simulated_sem$sys_eq,
+#'   dates = simulated_sem$dates,
+#'   options = list(gibbs = list(ndraws = 10))
+#' )
+#' print(fit)
+#'
+#' @seealso
+#' - To create a `koma_seq` object see \code{\link{system_of_equations}}.
+#' - For a comprehensive example of using `estimate`, see
+#'   \code{vignette("koma")}.
+#' - Related functions within the package that may be of interest:
+#'   \code{\link{forecast}}.
+#' @export
+estimate <- function(ts_data, sys_eq, dates,
+                     ...,
+                     options = list(gibbs = list(), fill = list(method = "mean")),
+                     estimates = NULL) {
+  check_dots_used(...)
+  setup_global_progress_handler()
+
+  equation_settings <- sys_eq$equation_settings[sys_eq$stochastic_equations]
+  if (is.null(options)) {
+    options <- list()
+  }
+  if (!is.list(options)) {
+    cli::cli_abort("`options` must be a list.")
+  }
+  gibbs_options <- options$gibbs
+  if (is.null(gibbs_options)) {
+    gibbs_options <- list()
+  }
+  set_gibbs_settings(gibbs_options, equation_settings)
+
+  cli::cli_h1("Estimation")
+  UseMethod("estimate")
+}
+
+#' @rdname estimate
+#' @export
+estimate.list <- function(ts_data, sys_eq, dates,
+                          ...,
+                          options = list(gibbs = list(), fill = list(method = "mean")),
+                          estimates = NULL) {
+  if (is.null(options)) {
+    options <- list()
+  }
+  if (!is.list(options)) {
+    cli::cli_abort("`options` must be a list.")
+  }
+  gibbs_options <- options$gibbs
+  if (is.null(gibbs_options)) {
+    gibbs_options <- list()
+  }
+  fill_method <- options$fill$method
+  if (is.null(fill_method)) {
+    fill_method <- "mean"
+  }
+  fill_method <- match.arg(fill_method, c("mean", "median"))
+
+  if (!inherits(ts_data, "list")) {
+    cli::cli_abort("`ts_data` must be a list. You provided a {class(ts_data)}.")
+  }
+  plain_ts_names <- names(ts_data)[sapply(
+    ts_data,
+    function(x) inherits(x, "ts") && !inherits(x, "koma_ts")
+  )]
+  if (length(plain_ts_names) > 0) {
+    ts_data <- convert_ts_data_to_ets(ts_data)
+  }
+  if (!all(sapply(ts_data, function(x) inherits(x, "koma_ts")))) {
+    cli::cli_abort("Each element in `ts_data` must be of class 'koma_ts'.")
+  }
+  if (!inherits(sys_eq, "koma_seq")) {
+    cli::cli_abort(c(
+      "`sys_eq` must be of class 'koma_seq'.",
+      "You provided a {class(sys_eq)}."
+    ))
+  }
+  vars <- c(sys_eq$endogenous_variables, sys_eq$exogenous_variables, sys_eq$weight_variables)
+  if (any(!vars %in% names(ts_data))) {
+    cli::cli_abort(c(
+      "The following series are missing in {.var ts_data}: {.var {vars[!vars %in% names(ts_data)]}}"
+    ))
+  }
+
+  pre <- new_prepare_estimation(ts_data, sys_eq, dates, fill_method)
+  if (is.null(estimates)) {
+    estimates <- new_estimate(pre$sys_eq, pre$y_matrix, pre$x_matrix)
+  } else {
+    # reestimate some equations
+    stopifnot(inherits(estimates, "koma_estimate"))
+    eq_jx <- identify_reestimation_indices(sys_eq, estimates$sys_eq)
+    estimates <- estimates$estimates
+
+    if (!is.null(eq_jx)) {
+      # estimate subset
+      reestimates <- new_estimate(pre$sys_eq, pre$y_matrix, pre$x_matrix, eq_jx)
+      for (name in names(reestimates)) {
+        estimates[[name]] <- reestimates[[name]]
+      }
+      estimates <- estimates[sys_eq$stochastic_equations]
+    }
+  }
+
+  tryCatch(
+    {
+      acceptance_probs <- build_settings(
+        default = get_default_acceptance_prob(),
+        settings = gibbs_options,
+        equation_settings = sys_eq$equation_settings
+      )
+      validate_estimate_sem(estimates, acceptance_probs)
+    },
+    error = function(e) {
+      cli::cli_alert_danger("Validation failed: {e$message}.")
+    }
+  )
+
+  structure(
+    list(
+      estimates = estimates,
+      sys_eq = pre$sys_eq,
+      ts_data = pre$ts_data,
+      y_matrix = pre$y_matrix,
+      x_matrix = pre$x_matrix,
+      gibbs_specifications = get_gibbs_settings(),
+      dates = dates,
+      plain_ts_names = plain_ts_names
+    ),
+    class = "koma_estimate"
+  )
+}
+
+convert_ts_data_to_ets <- function(ts_data) {
+  non_koma_names <- names(ts_data)[sapply(
+    ts_data,
+    function(x) inherits(x, "ts") && !inherits(x, "koma_ts")
+  )]
+
+  # Sibling koma_ts series may carry custom attributes beyond series_type/
+  # method (e.g. value_type). as_mets() requires every series in ts_data to
+  # share the same attribute names, so any such extras are backfilled as NA
+  # on the converted series.
+  koma_attr_names <- unique(unlist(lapply(
+    ts_data[setdiff(names(ts_data), non_koma_names)],
+    function(x) attr(x, "ets_attributes")
+  )))
+  extra_attr_names <- setdiff(koma_attr_names, c("series_type", "method"))
+
+  if (length(non_koma_names) > 0) {
+    cli::cli_warn(c(
+      "!" = "The following series are plain {.cls ts} objects, not {.cls koma_ts}: {.val {non_koma_names}}.",
+      "i" = "They are assumed to already be in rates, the form the model
+      estimates on, and are converted to {.cls koma_ts} with
+      {.code series_type = \"rate\"}, {.code method = \"none\"}. The values
+      are used as-is; no rate/level transformation is applied.",
+      if (length(extra_attr_names) > 0) {
+        c("i" = "Other series in {.arg ts_data} also carry {.val {extra_attr_names}};
+        these are set to {.code NA} on the converted series.")
+      },
+      "i" = "To convert a series from levels (e.g. a percentage or diff_log
+      growth rate), wrap it first with {.fn ets} or {.fn as_ets}. See
+      {.code vignette(\"koma-extended-timeseries\")} for details."
+    ))
+  }
+
+  extra_attrs <- stats::setNames(
+    as.list(rep(NA, length(extra_attr_names))),
+    extra_attr_names
+  )
+
+  ts_names <- names(ts_data)
+  ts_data <- lapply(seq_along(ts_data), function(ix) {
+    x <- ts_data[[ix]]
+    if (inherits(x, "ts") && !inherits(x, "koma_ts")) {
+      x <- do.call(as_ets, c(
+        list(x, series_type = "rate", method = "none"), extra_attrs
+      ))
+    }
+    if (!inherits(x, "koma_ts")) {
+      cli::cli_abort("All elements must be koma_ts after conversion")
+    }
+    x
+  })
+  names(ts_data) <- ts_names
+
+  ts_data
+}
+
+new_prepare_estimation <- function(ts_data, sys_eq, dates, fill_method) {
+  fill_method <- match.arg(fill_method, c("mean", "median"))
+  frequency <- get_single_frequency(ts_data)
+  validate_estimation_dates(dates, frequency = frequency)
+  dates <- dates_to_num(dates, frequency = frequency)
+
+  # only keep data needed for system
+  ts_data <- ts_data[c(
+    sys_eq$endogenous_variables,
+    sys_eq$exogenous_variables,
+    sys_eq$weight_variables
+  )]
+  ##### Create Lagged Variables
+  ts_data <- create_lagged_variables(
+    level(ts_data), sys_eq$endogenous_variables, sys_eq$exogenous_variables,
+    sys_eq$predetermined_variables
+  )
+
+  #### Calculate dynamic weights
+  sys_eq$identities <- get_seq_weights(
+    level(ts_data),
+    sys_eq$identities,
+    dates,
+    frequency = frequency
+  )
+
+  # Check if model can be identified
+  model_identification(
+    sys_eq$character_gamma_matrix,
+    sys_eq$character_beta_matrix,
+    sys_eq$identities,
+    call = rlang::caller_env()
+  )
+
+  ##### Fill ragged edge
+  ts_data <- fill_ragged_edge(
+    rate(ts_data), sys_eq, sys_eq$exogenous_variables, dates, fill_method
+  )
+
+  ##### Estimate filled balanced data
+  ##### Construct Y and X matrix
+  balanced_data <- construct_balanced_data(
+    rate(ts_data), sys_eq$endogenous_variables,
+    sys_eq$total_exogenous_variables,
+    dates$estimation$start, dates$estimation$end,
+    warn = TRUE
+  )
+
+  # Estimation inverts x_matrix (or t(x_matrix) %*% x_matrix); an exact
+  # linear dependency between columns (e.g. a lagged identity coinciding
+  # with lags of its own components) would otherwise only surface later as
+  # an opaque "computationally singular" error inside the Gibbs sampler.
+  validate_full_rank(balanced_data$x_matrix, call = rlang::caller_env())
+
+  structure(
+    list(
+      sys_eq = sys_eq,
+      ts_data = ts_data,
+      y_matrix = balanced_data$y_matrix,
+      x_matrix = balanced_data$x_matrix
+    )
+  )
+}
+
+validate_estimation_dates <- function(dates, frequency = 4) {
+  validate_date_range(dates, "estimation", frequency = frequency)
+}
+
+#' Validate a Start/End Date Range in `dates`
+#'
+#' @param dates A list of date ranges, e.g. `dates$estimation`.
+#' @param field Name of the range in `dates` to validate, e.g. "estimation".
+#' @param frequency Frequency of the time series.
+#' @param call The environment from which the error is called.
+#'
+#' @return Invisibly `NULL`; aborts if the range is invalid.
+#' @keywords internal
+validate_date_range <- function(dates, field, frequency = 4,
+                                call = rlang::caller_env()) {
+  range <- dates[[field]]
+  label <- paste0("dates$", field)
+
+  if (is.null(range) ||
+    is.null(range$start) ||
+    is.null(range$end) ||
+    length(range$start) == 0L ||
+    length(range$end) == 0L
+  ) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} and {.field end} must be provided"
+    ), call = call)
+  }
+  if (!is.numeric(range$start) || !is.numeric(range$end)) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} and {.field end} must be numeric"
+    ), call = call)
+  }
+  if (!length(range$start) %in% c(1L, 2L) ||
+    !length(range$end) %in% c(1L, 2L)
+  ) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} and {.field end} must be length 1 or 2"
+    ), call = call)
+  }
+  if (anyNA(range$start) ||
+    anyNA(range$end) ||
+    any(!is.finite(range$start), na.rm = TRUE) ||
+    any(!is.finite(range$end), na.rm = TRUE)
+  ) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} and {.field end} must be finite"
+    ), call = call)
+  }
+  if (length(range$start) == 2L &&
+    (range$start[2] < 1L || range$start[2] > frequency)
+  ) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} period must be between 1 and {frequency}"
+    ), call = call)
+  }
+  if (length(range$end) == 2L &&
+    (range$end[2] < 1L || range$end[2] > frequency)
+  ) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field end} period must be between 1 and {frequency}"
+    ), call = call)
+  }
+
+  range_start <- dates_to_num(range$start, frequency = frequency)
+  range_end <- dates_to_num(range$end, frequency = frequency)
+  if (length(range_start) != 1L || length(range_end) != 1L) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} and {.field end} must be scalar dates"
+    ), call = call)
+  }
+  if (range_start > range_end) {
+    cli::cli_abort(c(
+      "!" = "Invalid {.field {label}}:",
+      "x" = "{.field start} must be before {.field end}"
+    ), call = call)
+  }
+
+  invisible(NULL)
+}
+
+new_estimate <- function(sys_eq, y_matrix, x_matrix, eq_jx = NULL) {
+  # estimate model
+  estimate_sem(sys_eq, y_matrix, x_matrix, eq_jx = eq_jx)
+}
+
+validate_estimate_sem <- function(x, acceptance_probs) {
+  validate_acceptance_prob(x, acceptance_probs)
+
+  x
+}
+
+get_default_acceptance_prob <- function() {
+  list(acceptance_prob = c(0.2, 0.6))
+}
+
+validate_acceptance_prob <- function(x, acceptance_prob) {
+  acc_rate <- vapply(x, \(z) mean(z$count_accepted, na.rm = TRUE), numeric(1))
+  eqs <- names(acc_rate)
+
+  acceptance_prob <- vapply(acceptance_prob, `[[`, numeric(2), "acceptance_prob")
+  flag <- acc_rate < acceptance_prob[1, eqs] | acc_rate > acceptance_prob[2, eqs]
+
+  out <- data.frame(
+    eq   = eqs,
+    rate = sprintf("%.1f%%", acc_rate * 100),
+    flag = flag
+  )
+
+  if (any(out$flag, na.rm = TRUE)) {
+    default <- get_default_acceptance_prob()
+    cli::cli_h1(
+      cli::col_red("{cli::symbol$warning} MCMC Acceptance Probability Warnings")
+    )
+
+    purrr::walk(
+      which(out$flag),
+      ~ cli::cli_li("{.strong {out$eq[.x]}}: {out$rate[.x]}")
+    )
+    cli::cli_text("\n")
+    cli::cli_alert_info(
+      "Some acceptance probabilities are outside the recommended range ({default$acceptance_prob[1]*100}%-{default$acceptance_prob[2]*100}%).
+      Consider revising the equations, tuning each equation's tau, or adjusting your priors."
+    )
+    cli::cli_text("\n")
+  }
+}
+
+#' @export
+format.koma_estimate <- function(x,
+                                 ...,
+                                 variables = NULL,
+                                 central_tendency = "mean",
+                                 ci_low = 5,
+                                 ci_up = 95,
+                                 digits = 2) {
+  # Ensure coefficient substitution only matches whole variable tokens.
+  escape_regex <- function(x) {
+    gsub("([][{}()+*^$|\\\\.?])", "\\\\\\1", x)
+  }
+
+  replace_var <- function(text, var, value) {
+    escaped <- escape_regex(var)
+    pattern <- paste0("(?<![A-Za-z0-9_\\.])", escaped, "(?![A-Za-z0-9_\\.])")
+    gsub(pattern, value, text, perl = TRUE)
+  }
+
+  parsed_eq <- lapply(x$sys_eq$equations, split_eq)
+
+  if (!is.null(variables)) {
+    stopifnot(is.character(variables))
+    lhs_names <- vapply(parsed_eq, function(eq) eq$lhs, character(1))
+    missing <- setdiff(variables, lhs_names)
+    if (length(missing)) {
+      cli::cli_abort(
+        "The following variables are not part of this estimate: {.val {missing}}"
+      )
+    }
+    parsed_eq <- Filter(function(eq) eq$lhs %in% variables, parsed_eq)
+  }
+
+  out <- c()
+  for (equation in parsed_eq) {
+    op <- equation$op
+    lhs <- equation$lhs
+    rhs <- equation$rhs
+
+    # no coefficients to replace for identity equations
+    if (grepl("~", op)) {
+      # get estimates
+      est <- summary_statistics(
+        lhs, x$estimates, x$sys_eq,
+        central_tendency, ci_low, ci_up
+      )
+
+      rhs <- replace_var(
+        rhs,
+        "constant",
+        round(est[[1]]$coef["constant"], digits)
+      )
+
+      # add coefficients in front of variables
+      for (var in names(est[[1]]$coef)) {
+        coef_value <- round(est[[1]]$coef[[var]], digits)
+        if (var != "constant") {
+          rhs <- replace_var(
+            rhs,
+            var,
+            paste0(coef_value, "*", var)
+          )
+        }
+      }
+    }
+    # replace calculated weights for identity equations
+    if (grepl("\\(*\\)", lhs)) {
+      lhs <- sub("\\([^)]*\\)\\*", "", lhs)
+      iden <- x$sys_eq$identities[[lhs]]
+      # Replace the components with their weights
+      for (component in names(iden$components)) {
+        weight_name <- iden$components[[component]]
+        weight <- round(iden$weights[[weight_name]], digits)
+        # Regular expression to find the pattern (value)*component
+        pattern <- paste0("\\(([^\\)]+)\\)\\*", component)
+        replacement <- paste0(weight, "*", component)
+
+        rhs <- sub(pattern, replacement, rhs)
+      }
+    }
+    # replace +- with -
+    rhs <- gsub("+-", "-", rhs, fixed = TRUE)
+    rhs <- gsub("--", "-", rhs, fixed = TRUE)
+    # Add spaces around operators in the right-hand side
+    rhs <- gsub("([+-])", " \\1 ", rhs)
+    rhs <- gsub("L([0-9]+)", "L\\1", rhs)
+
+    out <- c(out, paste0(lhs, op, rhs))
+  }
+
+  format.koma_seq(list(equations = out))
+}
+
+#' Print method for koma_estimate objects
+#'
+#' Provides a concise, console-friendly overview of the estimated system.
+#'
+#' @param x A `koma_estimate` object.
+#' @param ... Additional arguments forwarded to formatting internals.
+#' @param variables Optional character vector of endogenous variables to print.
+#'   Defaults to all variables.
+#' @param central_tendency Central tendency used when summarizing estimates
+#'   (e.g., "mean", "median"). Defaults to "mean".
+#' @param ci_low Lower bound (percent) for credible intervals. Defaults to 5.
+#' @param ci_up Upper bound (percent) for credible intervals. Defaults to 95.
+#' @param digits Number of digits to print for numeric values. Defaults to 2.
+#'
+#' @return Invisibly returns `x` after printing.
+#' @seealso \code{\link[=summary.koma_estimate]{summary.koma_estimate}} for
+#'   detailed posterior summaries.
+#' @export
+print.koma_estimate <- function(x,
+                                ...,
+                                variables = NULL,
+                                central_tendency = "mean",
+                                ci_low = 5,
+                                ci_up = 95,
+                                digits = 2) {
+  cli::cli_h1("Estimates")
+  if (length(x$plain_ts_names) > 0) {
+    cli::cli_alert_warning(
+      "Series treated as already in rates (plain {.cls ts} input, no
+      transformation applied): {.val {x$plain_ts_names}}."
+    )
+  }
+  formatted_equations <- format(
+    x,
+    ...,
+    variables = variables,
+    central_tendency = central_tendency,
+    ci_low = ci_low,
+    ci_up = ci_up,
+    digits = digits
+  )
+  cat(paste(formatted_equations, collapse = "\n"), "\n")
+  invisible(x)
+}
+
+#' Extract a texreg summary from a koma_estimate
+#'
+#' Builds one or more \pkg{texreg} objects from a `koma_estimate`, so results
+#' can be rendered with `texreg::screenreg()` or similar helpers.
+#'
+#' @param model A `koma_estimate` object.
+#' @param variables Optional character vector of endogenous variables to
+#'   include. Defaults to all variables in `model$estimates`.
+#' @param central_tendency Central tendency used when summarizing estimates
+#'   (e.g., "mean", "median"). Defaults to "mean".
+#' @param ci_low Lower bound (percent) for credible intervals. Defaults to 5.
+#' @param ci_up Upper bound (percent) for credible intervals. Defaults to 95.
+#' @param digits Number of digits to round numeric values. Defaults to 2.
+#' @param ... Unused. Included for `texreg::extract()` compatibility.
+#'
+#' @return A `texreg` object when one variable is requested, otherwise a named
+#'   list of `texreg` objects.
+#'
+#' @examples
+#' if (requireNamespace("texreg", quietly = TRUE)) {
+#'   data("simulated_sem")
+#'   set.seed(11)
+#'
+#'   fit <- estimate(
+#'     ts_data = simulated_sem$ts_data,
+#'     sys_eq = simulated_sem$sys_eq,
+#'     dates = simulated_sem$dates,
+#'     options = list(gibbs = list(ndraws = 10))
+#'   )
+#'   texreg::extract(fit, variables = "consumption")
+#' }
+#' @seealso \code{\link[=summary.koma_estimate]{summary.koma_estimate}} for
+#'   summary output with optional \pkg{texreg} formatting.
+#' @export
+extract.koma_estimate <- function(model,
+                                  variables = NULL,
+                                  central_tendency = "mean",
+                                  ci_low = 5,
+                                  ci_up = 95,
+                                  digits = 2,
+                                  ...) {
+  if (!requireNamespace("texreg", quietly = TRUE)) {
+    stop("Package 'texreg' must be installed to use extract().")
+  }
+
+  if (is.null(variables)) {
+    variables <- names(model$estimates)
+  }
+
+  tr <- vector("list", length(variables))
+  names(tr) <- variables
+
+  for (v in variables) {
+    est <- summary_statistics(
+      endogenous_variables = v,
+      estimates = model$estimates,
+      sys_eq = model$sys_eq,
+      central_tendency = central_tendency,
+      ci_low = ci_low,
+      ci_up = ci_up
+    )[[1]]
+
+    n_coef <- length(est$coef)
+    pvals <- est$pvalues
+    if (is.null(pvals) || length(pvals) == 0L) {
+      pvals <- rep(NA_real_, n_coef)
+    } else {
+      pvals <- as.numeric(pvals)
+      if (length(pvals) != n_coef) {
+        pvals <- rep(NA_real_, n_coef)
+      }
+    }
+
+    tr[[v]] <- texreg::createTexreg(
+      coef.names = est$coef.names,
+      coef = est$coef,
+      pvalues = pvals,
+      ci.low = est$ci.low,
+      ci.up = est$ci.up,
+      model.name = "KOMA"
+    )
+  }
+
+  if (length(tr) == 1L) {
+    return(tr[[1]])
+  }
+
+  tr
+}
+
+#' Summary method for koma_estimate objects
+#'
+#' This function provides a summary for koma_estimate objects.
+#' It can return either a texreg object or an ASCII table.
+#'
+#' @param object A koma_estimate object.
+#' @param ... Additional parameters:
+#'   \describe{
+#'     \item{variables}{Optional. A character vector of variables to summarize.
+#'    Default is NULL, which means all variables will be summarized.}
+#'     \item{central_tendency}{Optional. A string specifying the measure of
+#'      central tendency ("mean", "median"). Default is "mean".}
+#'     \item{ci_low}{Optional. Lower bound of the confidence interval. Default
+#'          is 5.}
+#'     \item{ci_up}{Optional. Upper bound of the confidence interval. Default is
+#'          95.}
+#'     \item{use_texreg}{Optional. If TRUE, prints a texreg summary when
+#'          available. Defaults to TRUE when texreg is installed, otherwise
+#'          FALSE.}
+#'     \item{digits}{Optional. Number of digits to round numeric values.
+#'     Default is 2.}
+#'   }
+#'   Additional arguments are forwarded to texreg output helpers (for example,
+#'   arguments accepted by `texreg::screenreg()`) when `use_texreg = TRUE`.
+#' @return Returns a list of summary statistics for each variable (invisibly)
+#'   when `use_texreg` is FALSE. When `use_texreg` is TRUE and texreg is
+#'   installed, returns a texreg extract object that prints via
+#'   `screenreg()` when printed.
+#' @export
+summary.koma_estimate <- function(object, ...) {
+  is_texreg_installed <- check_texreg_installed()
+
+  args <- list(...)
+  known_args <- c(
+    "variables",
+    "central_tendency",
+    "ci_low",
+    "ci_up",
+    "use_texreg",
+    "digits"
+  )
+  texreg_args <- args[setdiff(names(args), known_args)]
+  if (length(texreg_args) && any(names(texreg_args) == "")) {
+    texreg_args <- texreg_args[nzchar(names(texreg_args))]
+  }
+  variables <- args$variables
+  central_tendency <- args$central_tendency
+  ci_low <- args$ci_low
+  ci_up <- args$ci_up
+  use_texreg <- args$use_texreg
+  digits <- args$digits
+
+  # Set default values if not provided
+  if (is.null(variables)) variables <- names(object$estimates)
+  if (is.null(central_tendency)) central_tendency <- "mean"
+  if (is.null(ci_low)) ci_low <- 5
+  if (is.null(ci_up)) ci_up <- 95
+  if (is.null(digits)) digits <- 2
+
+  if (is.null(use_texreg)) {
+    use_texreg <- is_texreg_installed
+  } else if (isTRUE(use_texreg) && !is_texreg_installed) {
+    cli::cli_abort(c(
+      "Package {.pkg texreg} is required when {.arg use_texreg = TRUE}.",
+      "i" = "Install it or set {.arg use_texreg = FALSE}."
+    ))
+  }
+
+  if (!is_texreg_installed) {
+    cli::cli_warn(c(
+      "Package {.pkg texreg} is not installed.",
+      "i" = "Falling back to non-texreg summary output."
+    ))
+    use_texreg <- FALSE
+  }
+
+  if (use_texreg) {
+    ci_level <- ci_up - ci_low
+    custom_note <- sprintf(
+      "Posterior %s (%.0f%% credible interval: [%.1f%%, %.1f%%])",
+      central_tendency, ci_level, ci_low, ci_up
+    )
+    if (!is.null(object$dates$estimation$start) && !is.null(object$dates$estimation$end)) {
+      frequency <- get_single_frequency(object$ts_data)
+      start <- dates_to_str(object$dates$estimation$start, frequency = frequency)
+      end <- dates_to_str(object$dates$estimation$end, frequency = frequency)
+      custom_note <- paste0(
+        custom_note, "\nEstimation period: ", start, " - ", end
+      )
+    }
+    if (length(custom_note) > 1L) {
+      custom_note <- paste(custom_note, collapse = "\n")
+    }
+
+    tr <- extract.koma_estimate(
+      object,
+      variables = variables,
+      central_tendency = central_tendency,
+      ci_low = ci_low,
+      ci_up = ci_up,
+      digits = digits
+    )
+
+    if (inherits(tr, "texreg")) {
+      tr <- list(tr)
+      if (length(variables) == 1L) {
+        names(tr) <- variables
+      }
+    }
+
+    if (length(texreg_args)) {
+      attr(tr, "koma_texreg_args") <- texreg_args
+    }
+    attr(tr, "koma_custom_note") <- custom_note
+    attr(tr, "koma_digits") <- digits
+    class(tr) <- c("koma_texreg", class(tr))
+    return(tr)
+  }
+
+  out <- list()
+
+  for (endogenous_variable in variables) {
+    est <- summary_statistics(
+      endogenous_variable, object$estimates, object$sys_eq,
+      central_tendency, ci_low, ci_up
+    )
+    out[[endogenous_variable]] <- est[[1]]
+  }
+
+  structure(
+    list(
+      stats = out,
+      variables = variables,
+      central_tendency = central_tendency,
+      ci_low = ci_low,
+      ci_up = ci_up,
+      digits = digits
+    ),
+    class = "koma_summary"
+  )
+}
+
+#' @export
+print.koma_texreg <- function(x, ...) {
+  if (!requireNamespace("texreg", quietly = TRUE)) {
+    return(invisible(x))
+  }
+  custom_note <- attr(x, "koma_custom_note")
+  digits <- attr(x, "koma_digits")
+  if (is.null(digits)) digits <- 2
+  texreg_args <- attr(x, "koma_texreg_args")
+  if (is.null(texreg_args)) texreg_args <- list()
+  extra_args <- list(...)
+  if (length(extra_args)) {
+    texreg_args <- c(texreg_args, extra_args)
+  }
+
+  base_args <- list(
+    unclass(x),
+    ci.test = NA,
+    digits = digits,
+    custom.note = custom_note
+  )
+  if (length(texreg_args)) {
+    override_names <- intersect(names(base_args), names(texreg_args))
+    if (length(override_names)) {
+      base_args[override_names] <- NULL
+    }
+  }
+
+  print(
+    do.call(
+      texreg::screenreg,
+      c(base_args, texreg_args)
+    )
+  )
+
+  invisible(x)
+}
+
+#' @export
+print.koma_summary <- function(x, ...) {
+  stats <- x$stats
+  digits <- x$digits
+  variables <- x$variables
+
+  for (endogenous_variable in variables) {
+    est <- stats[[endogenous_variable]]
+
+    n <- length(est$coef)
+    tr <- vector("character", 2 * n)
+    ind_coef <- seq(1, 2 * n, 2)
+    ind_ci <- seq(2, 2 * n, 2)
+
+    tr[ind_coef] <- round(est$coef, digits)
+    names(tr)[ind_coef] <- est$coef.names
+
+    tr[ind_ci] <- paste0(
+      "[", round(est$ci.low, digits), "; ",
+      round(est$ci.up, digits), "]"
+    )
+    names(tr)[ind_ci] <- ""
+
+    lines <- glue::glue("{fr(cli::style_bold(names(tr)))} {fl(tr)}")
+
+    plain <- cli::ansi_strip(lines)
+    max_width <- max(nchar(plain))
+
+    cli::cat_line(strrep("=", max_width))
+    cli::cli_text("{cli::style_bold(endogenous_variable)}")
+    cli::cat_line(strrep("-", max_width))
+    cat(lines, sep = "\n")
+    cli::cat_line(strrep("=", max_width))
+    cli::cat_line("")
+  }
+
+  invisible(x)
+}
+
+check_texreg_installed <- function() rlang::is_installed("texreg")
+
+#' @keywords internal
+identify_reestimation_indices <- function(current_sys_eq, prev_sys_eq) {
+  prev_char_beta <- prev_sys_eq$character_beta_matrix
+  char_beta <- current_sys_eq$character_beta_matrix
+
+  # Remove columns of deterministic equations
+  char_beta <- char_beta[, current_sys_eq$stochastic_equations]
+
+  eq_jx <- NULL
+
+  for (ix in seq_len(ncol(char_beta))) {
+    endog <- colnames(char_beta)[ix]
+
+    # Get exogenous variables in the equation that are not zero
+    exog <- rownames(char_beta)[char_beta[, endog] != 0]
+
+    # Determine if the previous exogenous variables exist and
+    # get them if they do
+    if (endog %in% colnames(prev_char_beta)) {
+      prev_exog <- rownames(prev_char_beta)[prev_char_beta[, endog] != 0]
+    } else {
+      prev_exog <- character()
+    }
+
+    if (!identical(exog, prev_exog)) {
+      eq_jx <- c(eq_jx, ix)
+    }
+  }
+
+  eq_jx
+}
