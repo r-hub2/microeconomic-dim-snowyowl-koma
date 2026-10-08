@@ -44,6 +44,10 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
   priors_j <- construct_priors_j(
     priors, character_gamma_matrix, character_beta_matrix, jx
   )
+  # These prior terms are fixed for the equation across all Gibbs draws.
+  priors_j$theta_precision <- solve(priors_j$theta_vcv)
+  priors_j$theta_precision_mean <-
+    priors_j$theta_precision %*% priors_j$theta_mean
 
   # pre-define matrices for saving
   out <- list()
@@ -54,30 +58,41 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
   out$omega_tilde_jw <- vector("list", gibbs_sampler$nsave)
   count_accepted <- matrix(0, gibbs_sampler$ndraws, 1)
 
+  # cbind() and `[` are much slower on time series than on plain matrices and
+  # are called in every draw below, so drop the time series class once here.
+  y_matrix <- unclass(y_matrix)
+  attr(y_matrix, "tsp") <- NULL
+  x_matrix <- unclass(x_matrix)
+  attr(x_matrix, "tsp") <- NULL
+
   # x_matrix is fixed across all draws of this equation, so x'x (and the
   # restricted-column x_b'x_b used for beta_hat) are invariant across the
   # whole loop below. Compute them once here instead of on every call.
+  equation_data <- construct_equation_data(
+    y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix, jx
+  )
   xtx <- crossprod(x_matrix)
-  indices_to_remove <- grep("\\b0\\b", character_beta_matrix[, jx])
-  if (length(indices_to_remove) > 0) {
-    xbtxb <- crossprod(x_matrix[, -indices_to_remove, drop = FALSE])
-  } else {
-    xbtxb <- xtx
-  }
+  xbtxb <- crossprod(equation_data$x_b)
+  theta_permutation <- construct_theta_permutation(
+    character_beta_matrix, jx,
+    nrow(character_beta_matrix) *
+      (equation_data$gamma_count + 1)
+  )
 
   ##### 1. Initialize sampler:
   # get starting value for Metropolis-Hastings algorithm
-  initial_parameter <- initialize_sampler_informative(
+  initial_parameter <- initialize_sampler(
     y_matrix,
     x_matrix,
     character_gamma_matrix,
     character_beta_matrix,
     jx,
     xtx,
-    xbtxb
+    xbtxb,
+    equation_data = equation_data
   )
 
-  gamma_jw <- initial_parameter$gamma_jw
+  gamma_jw <- initial_parameter$gamma_parameters_j
   gamma_jw_1 <- gamma_jw
 
   cholesky_of_inverse_hessian <- initial_parameter$cholesky_of_inverse_hessian
@@ -85,7 +100,7 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
   # Get additional starting value for the first step for omega_jw
   omega_jw <- initial_omega_j(
     y_matrix, x_matrix, character_gamma_matrix,
-    character_beta_matrix, jx, gamma_jw, xtx, xbtxb
+    character_beta_matrix, jx, gamma_jw, xtx, xbtxb, equation_data
   )
 
   gx <- 1 # initial value for saved draws
@@ -100,7 +115,7 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
     ##### 2. Draw Theta_j from multivariate normal distribution
     results_draw_theta_j <- draw_theta_j_informative(
       y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
-      jx, gamma_jw, omega_jw, priors_j, xtx
+      jx, gamma_jw, omega_jw, priors_j, xtx, theta_permutation, equation_data
     )
 
     # Get theta matrix
@@ -109,7 +124,7 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
     ##### 3. Draw Omega_j from inverse Wishart distribution
     results_draw_omega_j <- draw_omega_j_informative(
       y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
-      jx, gamma_jw, theta_jw, priors_j
+      jx, gamma_jw, theta_jw, priors_j, equation_data
     )
 
     # Get omega_jw
@@ -127,7 +142,8 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
       cholesky_of_inverse_hessian,
       omega_jw,
       theta_jw,
-      priors_j
+      priors_j,
+      equation_data = equation_data
     )
 
     # Set count to 1 if the step has been accepted
@@ -140,11 +156,20 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
     ##### Save draws
     if (wx > gibbs_sampler$burnin &&
       (wx - gibbs_sampler$burnin) %% gibbs_sampler$nstore == 0) {
+      # Omega_tilde depends on gamma, but was computed in step 3 before gamma
+      # was drawn in step 4. Recompute it with the gamma that is saved.
+      omega_tilde_jw <- results_draw_omega_j$omega_tilde_jw
+      if (nrow(omega_jw) > 1) {
+        a_matrix_j <- diag(nrow(omega_jw))
+        a_matrix_j[, 1] <- c(1, -gamma_jw)
+        omega_tilde_jw <- t(a_matrix_j) %*% omega_jw %*% a_matrix_j
+      }
+
       out$beta_jw[[gx]] <- results_draw_theta_j$beta_jw
       out$theta_jw[[gx]] <- results_draw_theta_j$theta_jw
       out$gamma_jw[[gx]] <- gamma_jw
       out$omega_jw[[gx]] <- results_draw_omega_j$omega_jw
-      out$omega_tilde_jw[[gx]] <- results_draw_omega_j$omega_tilde_jw
+      out$omega_tilde_jw[[gx]] <- omega_tilde_jw
       gx <- gx + 1
     }
 
@@ -161,71 +186,6 @@ draw_parameters_j_informative <- function(y_matrix, x_matrix,
   out$count_accepted <- count_accepted
 
   out
-}
-
-#' Initialize the sampler
-#'
-#' `initialize_sampler_informative` initializes the sampler for the
-#' Metropolis-Hastings algorithm. It obtains the initial \eqn{gamma} parameters
-#' by numerically maximizing the target function. It then calculates the
-#' Cholesky factor \eqn{L} of the inverse of the Hessian \eqn{M^{-1}} of the
-#' target function.
-#' This Cholesky factor, along with the gamma parameter for equation \eqn{j}, is
-#' returned. The Cholesky factor is used to draw the candidate gamma in the MH
-#' algorithm.
-#'
-#' @inheritParams draw_parameters_j_informative
-#' @param xtx Precomputed \eqn{x_matrix'x_matrix}. This is invariant across
-#' Gibbs draws, so it is computed once instead of on every call.
-#' @param xbtxb Precomputed \eqn{x_b'x_b}, where \eqn{x_b} is
-#' \eqn{x_matrix} restricted to the columns kept for equation \eqn{j}. Same
-#' rationale as `xtx`.
-#'
-#' @return A list containing the initial parameters for gamma
-#' (`gamma_jw`) and the Cholesky factor of the
-#' inverse of the Hessian (`cholesky_of_inverse_hessian`) if
-#' `number_endogenous_in_j` is greater than 0.
-#' If not, only the `gamma_jw` parameter is returned as 0.
-#' @keywords internal
-initialize_sampler_informative <- function(y_matrix, x_matrix,
-                                           character_gamma_matrix,
-                                           character_beta_matrix, jx,
-                                           xtx, xbtxb) {
-  number_endogenous_in_j <-
-    length(grep("gamma", character_gamma_matrix[, jx]))
-  if (number_endogenous_in_j == 0) {
-    return(list(
-      gamma_jw = 0,
-      cholesky_of_inverse_hessian = NA
-    ))
-  } else {
-    # Maximize target function to obtain initial conditions for MH-algorithm
-    optimize_residuals <- stats::optim(
-      par = matrix(0, number_endogenous_in_j, 1),
-      fn = target_j_informative_initial,
-      y_matrix = y_matrix,
-      x_matrix = x_matrix,
-      character_gamma_matrix = character_gamma_matrix,
-      character_beta_matrix = character_beta_matrix,
-      jx = jx,
-      xtx = xtx,
-      xbtxb = xbtxb,
-      hessian = TRUE,
-      method = "BFGS"
-    )
-
-    # Use maximum as initial condition
-    gamma_jw <- optimize_residuals$par
-    # Use inverse of Hessian to approximate dispersion of target function
-    inverse_hessian <- solve(optimize_residuals$hessian)
-    # Cholesky factor of inverse of Hessian
-    cholesky_of_inverse_hessian <- t(chol(inverse_hessian))
-
-    list(
-      gamma_jw = gamma_jw,
-      cholesky_of_inverse_hessian = cholesky_of_inverse_hessian
-    )
-  }
 }
 
 #' Draw gamma parameters for equation j
@@ -248,13 +208,16 @@ initialize_sampler_informative <- function(y_matrix, x_matrix,
 #' @return A \eqn{(n_j \times 1)} matrix with the either accepted candidate or
 #' previous gamma parameters. Returns 0 if there are no endogenous
 #' variables in equation \eqn{j}.
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 draw_gamma_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
                                      character_beta_matrix, jx,
                                      gamma_jw, tau,
                                      cholesky_of_inverse_hessian, omega_jw,
-                                     theta_jw, priors_j) {
-  number_endogenous_in_j <- length(grep("gamma", character_gamma_matrix[, jx]))
+                                     theta_jw, priors_j,
+                                     equation_data) {
+  number_endogenous_in_j <- equation_data$gamma_count
   if (number_endogenous_in_j == 0) {
     gamma_jw <- NA
     return(gamma_jw)
@@ -280,7 +243,8 @@ draw_gamma_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
       gamma_jw = candidate_gamma_parameters_j,
       omega_jw,
       theta_jw,
-      priors_j
+      priors_j,
+      equation_data = equation_data
     )
     target_evaluation_previous <- -target_j_informative(
       y_matrix = y_matrix,
@@ -291,8 +255,17 @@ draw_gamma_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
       gamma_jw = gamma_jw,
       omega_jw,
       theta_jw,
-      priors_j
+      priors_j,
+      equation_data = equation_data
     )
+    if (!is.finite(target_evaluation_previous)) {
+      cli::cli_abort(c(
+        "The Metropolis-Hastings target is not finite at the current value
+        of gamma.",
+        "i" = "The chain cannot move from here. Check the equation for
+        constant or collinear series."
+      ))
+    }
     # Acceptance probability
     alpha <- min(
       1,
@@ -300,7 +273,7 @@ draw_gamma_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
     )
 
     # Accept-reject step
-    if (!is.nan(alpha) && alpha > stats::runif(n = 1)) {
+    if (!is.na(alpha) && alpha > stats::runif(n = 1)) {
       gamma_jw <- candidate_gamma_parameters_j
     } else {
       gamma_jw <- gamma_jw
@@ -319,14 +292,16 @@ draw_gamma_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
 #'
 #' @return List containing \eqn{{\tilde{\Omega}}_j^{(w)}} as `omega_tilde_jw`
 #' and \eqn{\Omega_j^{(w)}} as `omega_jw`.
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 draw_omega_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
                                      character_beta_matrix, jx, gamma_jw,
-                                     theta_jw, priors_j) {
-  number_endogenous_in_j <-
-    length(grep("gamma", character_gamma_matrix[, jx]))
+                                     theta_jw, priors_j,
+                                     equation_data) {
+  number_endogenous_in_j <- equation_data$gamma_count
   # number of exogenous, predetermined variables + intercept
-  number_of_observations <- nrow(y_matrix)
+  number_of_observations <- equation_data$number_of_observations
 
   if (number_endogenous_in_j == 0) {
     z_matrix_j <- as.matrix(y_matrix[, jx])
@@ -334,7 +309,7 @@ draw_omega_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
     # if number_endogenous_in_j=0 use identity when constructing Aj matrix
     a_matrix_j <- 1
   } else {
-    y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+    y_matrix_j <- equation_data$y_matrix_j
     z_matrix_j <- construct_z_matrix_j(
       gamma_jw, y_matrix, y_matrix_j, jx
     )
@@ -373,22 +348,27 @@ draw_omega_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
 #' @inheritParams draw_gamma_j_informative
 #' @param xtx Precomputed \eqn{x_matrix'x_matrix}. This is invariant across
 #' Gibbs draws, so it is computed once instead of on every call.
+#' @param theta_permutation Precomputed order of the elements of theta, as
+#' returned by [construct_theta_permutation()]. Same rationale as `xtx`.
 #'
 #' @return List containing theta_jw and beta_jw
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 draw_theta_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
                                      character_beta_matrix, jx, gamma_jw,
-                                     omega_jw, priors_j, xtx) {
-  number_endogenous_in_j <-
-    length(grep("gamma", character_gamma_matrix[, jx]))
-  number_of_exogenous <- nrow(character_beta_matrix)
+                                     omega_jw, priors_j, xtx,
+                                     theta_permutation,
+                                     equation_data) {
+  number_endogenous_in_j <- equation_data$gamma_count
+  number_of_exogenous <- equation_data$number_of_exogenous
 
   if (number_endogenous_in_j == 0) {
     z_matrix_j <- as.matrix(y_matrix[, jx])
     # if number_endogenous_in_j=0 use identity when constructing Aj matrix
     a_matrix_j <- 1
   } else {
-    y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+    y_matrix_j <- equation_data$y_matrix_j
     z_matrix_j <- construct_z_matrix_j(
       gamma_jw, y_matrix, y_matrix_j, jx
     )
@@ -410,60 +390,36 @@ draw_theta_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
   # parameters and the second block contains all parameters that are
   # restricted to zero.
   # Zero restrictions only on betas, i.e. first column of theta_hat
-  # Choose free parameters from first column (this is P')
-  permutation_matrix <- matrix(0, length(theta_bar), length(theta_bar))
-  # Find the indices of elements in equation j that are betas
-  fpos <- grep("^0", character_beta_matrix[, jx], invert = TRUE)
-  for (ix in seq_along(fpos)) {
-    permutation_matrix[ix, fpos[ix]] <- 1
+  permutation <- theta_permutation$permutation
+  seperate_blocks_at <- theta_permutation$seperate_blocks_at
+  if (length(permutation) != length(theta_bar)) {
+    cli::cli_abort(
+      "The theta permutation has {length(permutation)} elements, but there
+      are {length(theta_bar)} parameters."
+    )
   }
 
-  # Permute zero restrictions to the end
-  # Find the indices of elements in equation j that are 0
-  fposend <- grep("\\b0\\b", character_beta_matrix[, jx])
-
-  permute_from_row <- length(fpos) + 1
-  seperate_blocks_at <- length(theta_bar) - length(fposend)
-
-  for (ix in seq_along(fposend)) {
-    permutation_matrix[(seperate_blocks_at + ix), fposend[ix]] <- 1
-  }
-
-  if (number_endogenous_in_j != 0) {
-    # Leave free parameters of other columns at their place
-    permutation_matrix[
-      permute_from_row:seperate_blocks_at,
-      (length(character_beta_matrix[, jx]) + 1):length(theta_bar)
-    ] <-
-      diag(length(theta_bar) - length(character_beta_matrix[, jx]))
-  }
   # Permute theta_bar
-  theta_p <- permutation_matrix %*% theta_bar
+  theta_p <- theta_bar[permutation]
 
   # Construct the two blocks
-  theta_p1 <- theta_p[1:seperate_blocks_at]
-  theta_p2 <- theta_p[-(1:seperate_blocks_at)]
+  free <- seq_len(seperate_blocks_at)
+  restricted <- setdiff(seq_along(theta_p), free)
+  theta_p1 <- theta_p[free]
+  theta_p2 <- theta_p[restricted]
 
   # Compute unrestricted posterior variance
   xi <- xi_bar
 
   # Permute xi
-  xi_p <- permutation_matrix %*% xi %*% t(permutation_matrix)
+  xi_p <- xi[permutation, permutation, drop = FALSE]
 
   # Construct the two blocks
-  xi_p11 <- xi_p[1:seperate_blocks_at, 1:seperate_blocks_at, drop = FALSE]
+  xi_p11 <- xi_p[free, free, drop = FALSE]
   if (length(theta_p2) != 0) {
-    xi_p12 <- xi_p[
-      1:seperate_blocks_at,
-      (seperate_blocks_at + 1):length(theta_bar),
-      drop = FALSE
-    ]
+    xi_p12 <- xi_p[free, restricted, drop = FALSE]
     xi_p21 <- t(xi_p12)
-    xi_p22 <- xi_p[
-      (seperate_blocks_at + 1):length(theta_bar),
-      (seperate_blocks_at + 1):length(theta_bar),
-      drop = FALSE
-    ]
+    xi_p22 <- xi_p[restricted, restricted, drop = FALSE]
     # Compute update of posterior mean and posterior variance
     inverse_xi_p22 <- solve(xi_p22)
     theta_tilde <- theta_p1 - xi_p12 %*% inverse_xi_p22 %*% theta_p2
@@ -473,18 +429,21 @@ draw_theta_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
     xi_tilde <- xi_p11
   }
 
-  theta_pw1 <- multivariate_norm(n = 1, theta_tilde, xi_tilde)
+  theta_pw1 <- if (length(theta_tilde) == 0) {
+    numeric(0)
+  } else {
+    multivariate_norm(n = 1, theta_tilde, xi_tilde)
+  }
 
   # Construct full theta_p vector
   theta_pw <- c(theta_pw1, matrix(0, length(theta_p2), 1))
 
   # Permute back to original ordering
-  theta_jw <- t(permutation_matrix) %*% theta_pw
+  theta_jw <- matrix(0, length(theta_pw), 1)
+  theta_jw[permutation] <- theta_pw
 
   # Select beta vector
-  exo_in_jx <-
-    character_beta_matrix[which(character_beta_matrix[, jx] != 0), jx]
-  beta_jw <- theta_pw1[seq_along(exo_in_jx)]
+  beta_jw <- theta_pw1[seq_along(equation_data$beta_positions)]
 
   theta_mat_jw <- matrix(
     theta_jw, number_of_exogenous, (number_endogenous_in_j + 1)
@@ -505,16 +464,23 @@ draw_theta_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
 #' @return The function returns the evaluation of the target function,
 #' which is used to decide whether to accept or reject proposed states
 #' in the MH algorithm. Returns NA if there are no gamma parameters.
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 target_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
                                  character_beta_matrix, jx, gamma_jw, omega_jw,
-                                 theta_jw, priors_j) {
-  y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+                                 theta_jw, priors_j,
+                                 equation_data) {
+  if (equation_data$gamma_count == 0) {
+    cli::cli_warn("Equation {jx} does not contain any gamma parameters. Returning NA.")
+    return(NA)
+  }
+  y_matrix_j <- equation_data$y_matrix_j
   if (anyNA(y_matrix_j)) {
     return(NA)
   }
 
-  gamma_count <- sum(grepl("gamma", character_gamma_matrix[, jx]))
+  gamma_count <- equation_data$gamma_count
   # Check number of expected gamma_jw
   if (gamma_count != length(gamma_jw)) {
     stop("The number of gamma parameters does not match the number
@@ -522,8 +488,7 @@ target_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
   }
 
   # Get number of endogenous variables in equation j
-  number_endogenous_in_j <-
-    length(grep("gamma", character_gamma_matrix[, jx]))
+  number_endogenous_in_j <- equation_data$gamma_count
 
   if (number_endogenous_in_j == 0) {
     z_matrix_j <- as.matrix(y_matrix[, jx])
@@ -531,7 +496,7 @@ target_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
     # if number_endogenous_in_j=0 use identity when constructing Aj matrix
     a_matrix_j <- 1
   } else {
-    y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+    y_matrix_j <- equation_data$y_matrix_j
     z_matrix_j <- construct_z_matrix_j(
       gamma_jw, y_matrix, y_matrix_j, jx
     )
@@ -540,113 +505,24 @@ target_j_informative <- function(y_matrix, x_matrix, character_gamma_matrix,
     a_matrix_j[, 1] <- c(1, -gamma_jw)
   }
 
-  # explicit gamma priors specified
-  if (!is.null(priors_j[["gamma_mean"]]) && !is.null(priors_j[["gamma_vcv"]])) {
-    # Evaluate log of target function
-    # (multiply by -1: maximize instead of minimize)
-    target_result <-
-      -log(
-        multivariate_norm_pdf(
-          gamma_jw,
-          mu = priors_j[["gamma_mean"]], sigma = priors_j[["gamma_vcv"]]
-        )
-      )
-    +
-      0.5 * sum(diag(t(solve(a_matrix_j)) %*%
+  # Evaluate log of target function
+  # (multiply by -1: maximize instead of minimize)
+  # Likelihood term
+  target_result <-
+    0.5 * sum(diag(t(solve(a_matrix_j)) %*%
       t(z_matrix_j - x_matrix %*% theta_jw) %*%
       (z_matrix_j - x_matrix %*% theta_jw) %*%
       solve(a_matrix_j) %*% solve(omega_jw)))
-  } else {
-    # Evaluate log of target function
-    # (multiply by -1: maximize instead of minimize)
-    target_result <-
-      0.5 * sum(diag(t(solve(a_matrix_j)) %*%
-        t(z_matrix_j - x_matrix %*% theta_jw) %*%
-        (z_matrix_j - x_matrix %*% theta_jw) %*%
-        solve(a_matrix_j) %*% solve(omega_jw)))
+
+  # Prior term, only if explicit gamma priors are specified
+  if (!is.null(priors_j[["gamma_mean"]]) && !is.null(priors_j[["gamma_vcv"]])) {
+    target_result <- target_result -
+      multivariate_norm_pdf(
+        gamma_jw,
+        mu = priors_j[["gamma_mean"]], sigma = priors_j[["gamma_vcv"]],
+        log = TRUE
+      )
   }
-  target_result
-}
-
-#' Compute the target function for the jth equation
-#'
-#' `target_j_informative_initial` calculates the target function used in the
-#' Metropolis-Hastings (MH) algorithm for a given equation \eqn{j}.
-#' The target function is used in the MH algorithm to accept or reject proposed
-#' new states in the Markov chain.
-#'
-#' @inheritParams draw_parameters_j_informative
-#' @inheritParams draw_gamma_j_informative
-#' @param xtx Precomputed \eqn{x_matrix'x_matrix}. This is invariant across
-#' Gibbs draws, so it is computed once instead of on every call.
-#' @param xbtxb Precomputed \eqn{x_b'x_b}, where \eqn{x_b} is
-#' \eqn{x_matrix} restricted to the columns kept for equation \eqn{j}. Same
-#' rationale as `xtx`.
-#'
-#' @return The function returns the evaluation of the target function,
-#' which is used to decide whether to accept or reject proposed states
-#' in the MH algorithm. Returns NA if there are no gamma parameters.
-#' @keywords internal
-target_j_informative_initial <- function(y_matrix, x_matrix,
-                                         character_gamma_matrix,
-                                         character_beta_matrix, jx, gamma_jw,
-                                         xtx, xbtxb) {
-  y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
-  if (anyNA(y_matrix_j)) {
-    return(NA)
-  }
-
-  gamma_count <- sum(grepl("gamma", character_gamma_matrix[, jx]))
-  # Check number of expected gamma_jw
-  if (gamma_count != length(gamma_jw)) {
-    stop("The number of gamma parameters does not match the number
-        of expected parameters.")
-  }
-
-  number_of_observations <- nrow(y_matrix)
-  # number of exogenous, predetermined variables + intercept
-  number_of_exogenous <- nrow(character_beta_matrix)
-
-  # Get numnber of endogenous variables in equation j
-  number_endogenous_in_j <-
-    length(grep("gamma", character_gamma_matrix[, jx]))
-
-  if (number_endogenous_in_j == 0) {
-    z_matrix_j <- as.matrix(y_matrix[, jx])
-
-    # if number_endogenous_in_j=0 use identity when constructing Aj matrix
-    a_matrix_j <- 1
-  } else {
-    y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
-    z_matrix_j <- construct_z_matrix_j(
-      gamma_jw, y_matrix, y_matrix_j, jx
-    )
-
-    a_matrix_j <- diag((number_endogenous_in_j + 1))
-    a_matrix_j[, 1] <- c(1, -gamma_jw)
-  }
-
-  beta_hat_j <- construct_beta_hat_j_matrix(
-    x_matrix, z_matrix_j, character_beta_matrix, jx, xbtxb
-  )
-
-  pi_hat_0 <- construct_pi_hat_0(x_matrix, z_matrix_j, xtx)
-
-  # Compute theta_hat matrix
-  theta_hat <- cbind(beta_hat_j, pi_hat_0)
-
-  # omega_hat <- t(z_matrix_j - x_matrix %*% theta_hat) %*%
-  #  (z_matrix_j - x_matrix %*% theta_hat) / number_of_observations
-  #
-  # Evaluate log of target function
-  # (multiply by -1: maximize instead of minimize)
-  # target_result <- -dnorm(gamma_jw, mean = 0, sd = 100, log = TRUE) + 0.5*sum(diag(t(solve(a_matrix_j))%*%t(z_matrix_j - x_matrix %*% theta_hat) %*%
-  #                                 (z_matrix_j - x_matrix %*% theta_hat)%*%solve(a_matrix_j)%*%
-  #                             solve(omega_hat)))
-  #
-  target_result <- ((number_of_observations - number_of_exogenous) / 2) *
-    log(det(t(z_matrix_j - x_matrix %*% theta_hat) %*%
-      (z_matrix_j - x_matrix %*% theta_hat)))
   target_result
 }
 
@@ -663,19 +539,22 @@ target_j_informative_initial <- function(y_matrix, x_matrix,
 #' \eqn{x_matrix} restricted to the columns kept for equation \eqn{j}. Same
 #' rationale as `xtx`.
 #'
-#' @return The function returns the evaluation of the target function,
-#' which is used to decide whether to accept or reject proposed states
-#' in the MH algorithm. Returns NA if there are no gamma parameters.
+#' @return A \eqn{((1 + n_j) \times (1 + n_j))} matrix with the initial value
+#' for \eqn{\Omega_j}, the residual covariance at the initial
+#' \eqn{\gamma_j}. Returns NA if the endogenous regressors contain NA.
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 initial_omega_j <- function(y_matrix, x_matrix, character_gamma_matrix,
                             character_beta_matrix, jx, gamma_jw,
-                            xtx, xbtxb) {
-  gamma_count <- sum(grepl("gamma", character_gamma_matrix[, jx]))
+                            xtx, xbtxb,
+                            equation_data) {
+  gamma_count <- equation_data$gamma_count
 
   if (gamma_count == 0) {
     z_matrix_j <- as.matrix(y_matrix[, jx])
   } else {
-    y_matrix_j <- construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+    y_matrix_j <- equation_data$y_matrix_j
 
     if (anyNA(y_matrix_j)) {
       return(NA)
@@ -693,7 +572,7 @@ initial_omega_j <- function(y_matrix, x_matrix, character_gamma_matrix,
     )
   }
   beta_hat_j <- construct_beta_hat_j_matrix(
-    x_matrix, z_matrix_j, character_beta_matrix, jx, xbtxb
+    x_matrix, z_matrix_j, character_beta_matrix, jx, xbtxb, equation_data
   )
 
   pi_hat_0 <- construct_pi_hat_0(x_matrix, z_matrix_j, xtx)
@@ -701,12 +580,19 @@ initial_omega_j <- function(y_matrix, x_matrix, character_gamma_matrix,
   # Compute theta_hat matrix
   theta_hat <- cbind(beta_hat_j, pi_hat_0)
 
-  # Evaluate log of target function
-  # (multiply by -1: maximize instead of minimize)
-  omega_hat <- t(z_matrix_j - x_matrix %*% theta_hat) %*%
-    (z_matrix_j - x_matrix %*% theta_hat)
+  # Residual covariance of Z_j, an estimate of Omega_tilde = A' Omega A
+  omega_tilde_hat <- crossprod(z_matrix_j - x_matrix %*% theta_hat) /
+    nrow(x_matrix)
 
-  omega_hat
+  if (gamma_count == 0) {
+    # A is the identity, so Omega_tilde is Omega
+    return(omega_tilde_hat)
+  }
+
+  # Map back to Omega = A^-1' Omega_tilde A^-1
+  a_matrix_j <- diag(gamma_count + 1)
+  a_matrix_j[, 1] <- c(1, -gamma_jw)
+  t(solve(a_matrix_j)) %*% omega_tilde_hat %*% solve(a_matrix_j)
 }
 
 #' Construct priors for a single equation

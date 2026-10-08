@@ -182,7 +182,10 @@ is_system_of_equations <- function(x) {
 #'
 #' This function formats an object of class `koma_seq` for better readability.
 #' It formats the equations to ensure proper spacing around operators and aligns
-#' the equations for a cleaner display.
+#' the equations for a cleaner display. Priors are read from `x$priors` and
+#' shown in front of the term they belong to, with the error-term prior last.
+#' Equation specific settings are read from `x$equation_settings` and appended
+#' in square brackets.
 #'
 #' @param x An object of class `koma_seq`.
 #' @param ... Additional arguments passed to or from other methods.
@@ -194,8 +197,15 @@ format.koma_seq <- function(x, ...) {
 
   # Build a named list with LHS as names and the operator plus RHS as values
   eq_list <- stats::setNames(
-    lapply(parsed, function(eq) {
+    lapply(seq_along(parsed), function(ix) {
+      eq <- parsed[[ix]]
       rhs <- gsub("([+*])", " \\1 ", eq$rhs)
+      if (eq$op == "~" && ix <= length(x$priors)) {
+        rhs <- add_priors_to_rhs(rhs, x$priors[[ix]])
+      }
+      if (eq$op == "~") {
+        rhs <- add_settings_to_rhs(rhs, x$equation_settings[[eq$lhs]])
+      }
       op <- ifelse(eq$op == "~", "~  ", "== ")
       glue::glue("{op}{fl(rhs)}")
     }),
@@ -204,6 +214,41 @@ format.koma_seq <- function(x, ...) {
 
   # This call uses fr() on the names so that they align automatically
   glue::glue("{fr(cli::style_bold(names(eq_list)))} {fl(eq_list)}")
+}
+
+# Put each prior "{mean, variance}" in front of its term in an already spaced
+# right-hand side, and the error-term prior "{df, scale}" at the end.
+add_priors_to_rhs <- function(rhs, priors) {
+  if (length(priors) == 0) {
+    return(rhs)
+  }
+  format_prior <- function(prior) {
+    paste0("{", format(prior[[1]]), ", ", format(prior[[2]]), "}")
+  }
+
+  terms <- strsplit(rhs, " + ", fixed = TRUE)[[1]]
+  has_prior <- terms %in% names(priors)
+  terms[has_prior] <- paste(
+    vapply(priors[terms[has_prior]], format_prior, character(1)),
+    terms[has_prior]
+  )
+  if ("epsilon" %in% names(priors)) {
+    terms <- c(terms, format_prior(priors[["epsilon"]]))
+  }
+
+  paste(terms, collapse = " + ")
+}
+
+# Append the equation specific settings as "[key = value, ...]".
+add_settings_to_rhs <- function(rhs, settings) {
+  if (length(settings) == 0) {
+    return(rhs)
+  }
+  values <- vapply(
+    settings, function(value) paste(deparse(value), collapse = ""), character(1)
+  )
+
+  paste0(rhs, " [", paste(names(settings), "=", values, collapse = ", "), "]")
 }
 
 # Identify equation type and split accordingly
@@ -391,7 +436,7 @@ extract_endogenous_variables <- function(equations) {
 #' mismatched variables.
 #'
 #' @param character_weights Character vector of theta placeholder strings
-#' (e.g. `"theta6_4"`), as extracted from the gamma/beta matrices.
+#' (e.g. `"theta_gamma6_4"`), as extracted from the gamma/beta matrices.
 #' @param character_gamma_matrix,character_beta_matrix The character
 #' matrices `character_weights` was extracted from.
 #' @keywords internal
@@ -888,7 +933,9 @@ extract_from_matches <- function(equation, pattern) {
 #' variable names `prefix_1+prefix_2+...`, where the indices come from
 #' `spec` (parsed by `parse_index_spec()`, the same "single value or range,
 #' comma-separated" grammar used by lag notation). For example,
-#' `dummies(covid, 1:8)` becomes `covid_1+covid_2+...+covid_8`.
+#' `dummies(covid, 1:8)` becomes `covid_1+covid_2+...+covid_8`. A prior in
+#' front of the call is repeated for every dummy, so
+#' `{0,1}dummies(covid, 1:2)` becomes `{0,1}covid_1+{0,1}covid_2`.
 #'
 #' This runs before any other equation processing (priors, settings,
 #' validation), so the expanded terms are indistinguishable from terms the
@@ -910,7 +957,9 @@ extract_from_matches <- function(equation, pattern) {
 #' expanded.
 #' @keywords internal
 expand_dummies <- function(equations) {
-  loose_pattern <- "dummies\\(([^,()]*),([^()]*)\\)"
+  # An optional prior "{mean,variance}" directly in front of the call is
+  # captured too, so that it can be repeated for every dummy.
+  loose_pattern <- "(\\{[^}]*\\})?dummies\\(([^,()]*),([^()]*)\\)"
   prefix_pattern <- "^[a-zA-Z][a-zA-Z0-9_]*$"
   spec_pattern <- "^[0-9:,]+$"
 
@@ -921,8 +970,9 @@ expand_dummies <- function(equations) {
     for (expr in raw_matches) {
       m <- regexec(loose_pattern, expr, perl = TRUE)
       parts <- regmatches(expr, m)[[1]]
-      prefix <- trimws(parts[2])
-      spec <- trimws(gsub(" ", "", parts[3]))
+      prior <- parts[2]
+      prefix <- trimws(parts[3])
+      spec <- trimws(gsub(" ", "", parts[4]))
 
       indices <- if (grepl(prefix_pattern, prefix) && grepl(spec_pattern, spec)) {
         tryCatch(parse_index_spec(spec), error = function(e) integer(0))
@@ -940,7 +990,12 @@ expand_dummies <- function(equations) {
         ))
       }
 
-      replacement <- paste(paste0(prefix, "_", indices), collapse = "+")
+      # A prior in front of dummies() applies to every dummy it expands to,
+      # e.g. "{0,1}dummies(covid,1:2)" becomes "{0,1}covid_1+{0,1}covid_2".
+      replacement <- paste(
+        paste0(prior, prefix, "_", indices),
+        collapse = "+"
+      )
       equation <- sub(expr, replacement, equation, fixed = TRUE)
     }
 

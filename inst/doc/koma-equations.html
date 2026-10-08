@@ -448,6 +448,8 @@ appears without a variable name.</li>
 <li>A prior in front of lag shorthand (<code>x.L(1:3)</code>,
 <code>x.L(1, 3)</code>, <code>lag(x, 1:3)</code>) applies to every lag
 it expands to.</li>
+<li>A prior in front of <code>dummies()</code> (see section 7) applies
+to every dummy it expands to.</li>
 <li>The dependent variable cannot have a prior.</li>
 <li>The error-term prior must be the last prior in the equation.</li>
 </ul>
@@ -472,6 +474,10 @@ or a comma-separated mix).</p>
 <span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="co"># Equivalent to:</span></span>
 <span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>consp <span class="sc">~</span> ydispbr <span class="sc">+</span> <span class="fu">consp.L</span>(<span class="dv">1</span>) <span class="sc">+</span></span>
 <span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>  covid_1 <span class="sc">+</span> covid_2 <span class="sc">+</span> covid_3 <span class="sc">+</span> covid_4 <span class="sc">+</span> covid_5 <span class="sc">+</span> covid_6 <span class="sc">+</span> covid_7 <span class="sc">+</span> covid_8</span></code></pre></div>
+<p>A prior in front of <code>dummies()</code> is set on every dummy:
+<code>{0, 1} dummies(covid, 1:8)</code> is the same as writing
+<code>{0, 1}</code> in front of each of <code>covid_1</code> to
+<code>covid_8</code>.</p>
 <p><code>dummies()</code> only expands the <em>equation string</em> - it
 does not create any data. It is expanded before validation, so the
 expanded names are treated exactly like any hand-typed variable, which

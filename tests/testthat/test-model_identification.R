@@ -77,6 +77,199 @@ test_that("model_identification throws error for unidentified structure", {
   )
 })
 
+test_that("model_identification reports the order condition when only one
+non-constant predetermined variable exists", {
+  # a includes every variable in the system, so it has no exclusion
+  # restriction and the order condition fails
+  equations <-
+    "a ~ b + x,
+    b ~ a"
+
+  sys_eq <- system_of_equations(equations, "x")
+
+  expect_error(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    ),
+    "Model identification error: order"
+  )
+})
+
+test_that("model_identification reports the order condition when there are
+no predetermined variables besides the constant", {
+  # neither equation excludes anything, so the order condition fails
+  equations <-
+    "a ~ b,
+    b ~ a"
+
+  sys_eq <- system_of_equations(equations, character(0))
+
+  expect_error(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    ),
+    "Model identification error: order"
+  )
+})
+
+test_that("model_identification reports the counts of the order condition", {
+  # a has one endogenous regressor (b) and excludes no lagged or exogenous
+  # variable; c is an excluded endogenous variable and must not be counted
+  equations <-
+    "a ~ b + x,
+    b ~ a,
+    c ~ a"
+
+  sys_eq <- system_of_equations(equations, "x")
+
+  expect_error(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    ),
+    "a: 1 endogenous regressor, 0 excluded lagged or exogenous variables"
+  )
+})
+
+test_that("model_identification reports the rank of failing equations", {
+  # circular dependency between manufacturing and service
+  raw_equations <-
+    "consumption ~ gdp + consumption.L(1) + consumption.L(2),
+    investment ~ gdp + investment.L(1) + real_interest_rate,
+    current_account ~ current_account.L(1) + world_gdp,
+    manufacturing ~ service + world_gdp,
+    service ~ manufacturing + gdp,
+    gdp == 0.5*manufacturing + 0.5*service "
+
+  sys_eq <- system_of_equations(
+    raw_equations, c("real_interest_rate", "world_gdp")
+  )
+
+  expect_error(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    ),
+    "manufacturing: rank 4, required 5"
+  )
+})
+
+test_that("model_identification leaves the random number generator untouched", {
+  equations <-
+    "a ~ b + a.L(1) + x,
+    b ~ a + b.L(1) + x"
+
+  sys_eq <- system_of_equations(equations, "x")
+
+  expected <- withr::with_seed(1, runif(1))
+
+  withr::local_seed(1)
+  model_identification(
+    sys_eq$character_gamma_matrix,
+    sys_eq$character_beta_matrix,
+    sys_eq$identities
+  )
+
+  expect_equal(runif(1), expected)
+})
+
+test_that("model_identification does not create a seed when none exists", {
+  equations <-
+    "a ~ b + a.L(1) + x,
+    b ~ a + b.L(1) + x"
+
+  sys_eq <- system_of_equations(equations, "x")
+
+  withr::local_preserve_seed()
+  rm(".Random.seed", envir = globalenv())
+
+  model_identification(
+    sys_eq$character_gamma_matrix,
+    sys_eq$character_beta_matrix,
+    sys_eq$identities
+  )
+
+  expect_false(exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+})
+
+test_that("model_identification counts an excluded constant", {
+  # b includes both exogenous variables but has no constant, which a includes
+  equations <-
+    "a ~ b + x1,
+    b ~ 0 + a + x1 + x2"
+
+  sys_eq <- system_of_equations(equations, c("x1", "x2"))
+
+  expect_true(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    )
+  )
+})
+
+test_that("model_identification does not count a constant no equation uses", {
+  # a includes every variable of the system; the constant appears in no
+  # equation, so leaving it out is not an exclusion restriction
+  equations <-
+    "a ~ 0 + b + x,
+    b ~ 0 + a"
+
+  sys_eq <- system_of_equations(equations, "x")
+
+  expect_error(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    ),
+    "a: 1 endogenous regressor, 0 excluded lagged or exogenous variables"
+  )
+})
+
+test_that("model_identification works with weights that are not resolved yet", {
+  # dynamic weights are placeholders until estimate() computes them
+  equations <-
+    "c ~ y + z,
+    y == (w1)*c + (w2)*i"
+
+  sys_eq <- system_of_equations(equations, c("z", "i"))
+
+  expect_no_warning(
+    result <- model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    )
+  )
+  expect_true(result)
+})
+
+test_that("model_identification counts exogenous identity components", {
+  # c is identified through i and g, which it excludes and which enter the
+  # identity for y
+  equations <-
+    "c ~ y + z,
+    y == 1*c + 1*i + 1*g"
+
+  sys_eq <- system_of_equations(equations, c("z", "i", "g"))
+
+  expect_true(
+    model_identification(
+      sys_eq$character_gamma_matrix,
+      sys_eq$character_beta_matrix,
+      sys_eq$identities
+    )
+  )
+})
+
 test_that("model_identification without gamma parameters", {
   equations <-
     "manufacturing ~ manufacturing.L(1) + world_gdp,
@@ -231,7 +424,7 @@ test_that("beta_vectorization works", {
     )
   )
 
-  result <- beta_vectorization(character_beta_matrix)
+  result <- beta_vectorization(character_beta_matrix, list())
 
   expected_result <- list(
     transformation_matrix = structure(
@@ -284,6 +477,82 @@ test_that("beta_vectorization works", {
   )
 
   expect_equal(result, expected_result)
+})
+
+test_that("vectorization matches parameter names exactly", {
+  # beta1_2 must not also match beta1_20, and likewise for gamma and theta
+  character_beta_matrix <- matrix(
+    c("constant1", "beta1_2", "beta1_20"),
+    nrow = 3, ncol = 1
+  )
+
+  result <- beta_vectorization(character_beta_matrix, list())
+
+  expect_equal(
+    result$transformation_matrix,
+    matrix(c(0, 1, 0, 0, 0, 1), nrow = 3, ncol = 2)
+  )
+
+  character_gamma_matrix <- matrix(
+    c(
+      1, "-gamma2_1", "-gamma2_10",
+      0, 1, 0,
+      "-theta3_1", "-theta3_10", 1
+    ),
+    nrow = 3, ncol = 3
+  )
+
+  identity_weights <- list(
+    c = list(weights = list(theta3_1 = 0.1, theta3_10 = 0.9))
+  )
+
+  result <- gamma_vectorization(character_gamma_matrix, identity_weights)
+
+  expect_equal(
+    result$transformation_matrix,
+    matrix(
+      c(
+        0, -1, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, -1, 0, 0, 0, 0, 0, 0
+      ),
+      nrow = 9, ncol = 2
+    )
+  )
+  expect_equal(
+    result$constant_vector,
+    matrix(c(1, 0, 0, 0, 1, 0, -0.1, -0.9, 1), nrow = 9, ncol = 1)
+  )
+})
+
+test_that("vectorization keeps the weights of endogenous and exogenous
+identity components at the same index apart", {
+  # b is the second endogenous variable and x1 the second row of the beta
+  # matrix, so both components of y have index 3_2 (theta_gamma3_2 and
+  # theta_beta3_2)
+  exogenous_variables <- c("x1", "x2")
+
+  sys_eq <- system_of_equations(
+    "a ~ b + x1,
+    b ~ a + x2,
+    y == 0.3*b + 0.7*x1",
+    exogenous_variables
+  )
+  beta_vec <- beta_vectorization(
+    sys_eq$character_beta_matrix, sys_eq$identities
+  )
+  expect_equal(sum(beta_vec$constant_vector), 0.7)
+
+  sys_eq <- system_of_equations(
+    "a ~ b + x1,
+    b ~ a + x2,
+    y == 0.7*x1 + 0.3*b",
+    exogenous_variables
+  )
+  gamma_vec <- gamma_vectorization(
+    sys_eq$character_gamma_matrix, sys_eq$identities
+  )
+  # three ones on the diagonal and the weight of b
+  expect_equal(sum(gamma_vec$constant_vector), 3 - 0.3)
 })
 
 test_that("vector_to_matrix", {

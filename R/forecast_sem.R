@@ -619,7 +619,9 @@ validate_identities <- function(ts_out, identities, tol = 1e-8,
     )
     new_cols <- setdiff(colnames(ts_x), colnames(ts_out))
     if (length(new_cols)) {
+      output_names <- c(colnames(ts_out), new_cols)
       ts_out <- cbind(ts_out, ts_x[, new_cols, drop = FALSE])
+      colnames(ts_out) <- output_names
     }
   }
 

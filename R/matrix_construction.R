@@ -1,3 +1,27 @@
+#' Cache fixed data for an equation
+#'
+#' @inheritParams draw_parameters_j
+#' @return A list containing the endogenous subset, restricted exogenous
+#'   subset, beta positions, parameter counts, and observation count.
+#' @keywords internal
+construct_equation_data <- function(y_matrix, x_matrix, character_gamma_matrix,
+                                    character_beta_matrix, jx) {
+  gamma_count <- length(grep("gamma", character_gamma_matrix[, jx]))
+  beta_positions <- grep("^0", character_beta_matrix[, jx], invert = TRUE)
+  list(
+    y_matrix_j = if (gamma_count > 0) {
+      construct_y_matrix_j(y_matrix, character_gamma_matrix, jx)
+    } else {
+      NA
+    },
+    x_b = x_matrix[, beta_positions, drop = FALSE],
+    beta_positions = beta_positions,
+    gamma_count = gamma_count,
+    number_of_observations = nrow(y_matrix),
+    number_of_exogenous = nrow(character_beta_matrix)
+  )
+}
+
 #' Constructs a matrix of endogenous variables appearing in equation j
 #'
 #' This extracts a \eqn{(T x n_j)} matrix of endogenous variables appearing in
@@ -87,23 +111,22 @@ construct_z_matrix_j <- function(gamma_parameters_j, y_matrix, y_matrix_j, jx) {
 #' once per equation instead of on every call.
 #'
 #' @return \eqn{\hat{\beta_j}} with dimensions \eqn{k \times 1}.
+#' @param equation_data Fixed equation subsets and counts returned by
+#'   [construct_equation_data()]. The samplers compute this once per equation.
 #' @keywords internal
 construct_beta_hat_j_matrix <- function(x_matrix, z_matrix_j,
                                         character_beta_matrix, jx,
-                                        xbtxb) {
-  number_of_exogenous <- nrow(character_beta_matrix)
-
-  indices_to_remove <- grep("\\b0\\b", character_beta_matrix[, jx])
-
-  if (length(indices_to_remove) > 0) {
-    x_b <- x_matrix[, -indices_to_remove, drop = FALSE]
-  } else {
-    x_b <- x_matrix # Keep the original matrix if no matches are found
+                                        xbtxb, equation_data) {
+  beta_positions <- equation_data$beta_positions
+  x_b <- equation_data$x_b
+  number_of_exogenous <- equation_data$number_of_exogenous
+  beta_hat_j <- matrix(0, number_of_exogenous, 1)
+  if (length(beta_positions) == 0) {
+    return(beta_hat_j)
   }
   beta_hat_b <- solve(xbtxb, crossprod(x_b, z_matrix_j[, 1]))
 
-  beta_hat_j <- matrix(0, number_of_exogenous, 1)
-  beta_hat_j[grep("^0", character_beta_matrix[, jx], invert = TRUE)] <-
+  beta_hat_j[beta_positions] <-
     beta_hat_b
 
   return(beta_hat_j)
@@ -194,15 +217,52 @@ construct_theta_bar_j <- function(x_matrix, z_matrix_j, priors_j,
     solve(omega_tilde_jw),
     xtx
   )
-  inverse_theta_vcv <- solve(priors_j[["theta_vcv"]])
   xi_bar <- solve(
-    omega_kron_xtx + inverse_theta_vcv
+    omega_kron_xtx + priors_j$theta_precision
   )
   theta_bar <- xi_bar %*% (omega_kron_xtx %*% theta_hat +
-    inverse_theta_vcv %*% priors_j[["theta_mean"]])
+    priors_j$theta_precision_mean)
 
   return(list(
     theta_bar = theta_bar,
     xi_bar = xi_bar
   ))
+}
+
+#' Order the elements of theta with the zero restrictions last
+#'
+#' Finds the order that moves the parameters of \eqn{\theta_j} restricted to
+#' zero to the end. The zero restrictions are only on the betas, i.e. on the
+#' first column of \eqn{\Theta_j}. The free betas come first, then the
+#' parameters of the other columns in their original order, then the
+#' restricted betas.
+#'
+#' Indexing with the returned order, `theta[permutation]` and
+#' `xi[permutation, permutation]`, gives the same result as multiplying with
+#' the permutation matrix \eqn{P}, \eqn{P \theta} and \eqn{P \Xi P'}, but is
+#' much faster.
+#'
+#' @inheritParams construct_beta_hat_j_matrix
+#' @param number_of_parameters The length of the vectorized \eqn{\Theta_j},
+#' i.e. \eqn{k (1 + n_j)}.
+#'
+#' @return A list with `permutation`, the positions of the elements of theta
+#' in the new order, and `seperate_blocks_at`, the number of free parameters.
+#' @keywords internal
+construct_theta_permutation <- function(character_beta_matrix, jx,
+                                        number_of_parameters) {
+  # Find the indices of elements in equation j that are betas
+  fpos <- grep("^0", character_beta_matrix[, jx], invert = TRUE)
+  # Find the indices of elements in equation j that are 0
+  fposend <- grep("\\b0\\b", character_beta_matrix[, jx])
+
+  # Leave free parameters of other columns at their place
+  number_of_exogenous <- nrow(character_beta_matrix)
+  other_columns <- number_of_exogenous +
+    seq_len(number_of_parameters - number_of_exogenous)
+
+  list(
+    permutation = c(fpos, other_columns, fposend),
+    seperate_blocks_at = number_of_parameters - length(fposend)
+  )
 }

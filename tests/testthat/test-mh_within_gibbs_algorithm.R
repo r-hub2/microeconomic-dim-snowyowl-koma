@@ -1,3 +1,51 @@
+test_that("draw_parameters_j handles an equation with no free coefficients", {
+  x_matrix <- cbind(1, seq_len(20))
+  y_matrix <- cbind(rep(c(-1, 1), 10), seq_len(20))
+  character_gamma_matrix <- diag(2)
+  character_beta_matrix <- matrix(c("0", "0", "beta_12", "beta_22"), 2)
+  gibbs_sampler <- new_gibbs_spec(6, 0.5, 1, 1.1)
+
+  result <- draw_parameters_j(
+    y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
+    1, gibbs_sampler
+  )
+
+  expect_length(result$beta_jw, 3)
+  expect_true(all(lengths(result$beta_jw) == 0))
+  expect_equal(result$theta_jw, rep(list(matrix(0, 2, 1)), 3))
+  expect_true(all(is.na(unlist(result$gamma_jw))))
+  expect_true(all(is.finite(unlist(result$omega_jw))))
+  expect_true(all(unlist(result$omega_jw) > 0))
+  expect_equal(result$omega_tilde_jw, result$omega_jw)
+})
+
+test_that("draw_parameters_j saves theta_jw in the same form as the informative
+sampler", {
+  y_matrix <- simulated_data$y_matrix
+  x_matrix <- simulated_data$x_matrix
+  character_gamma_matrix <- simulated_data$character_gamma_matrix
+  character_beta_matrix <- simulated_data$character_beta_matrix
+  jx <- 1
+  gibbs_sampler <- new_gibbs_spec(6, 0.5, 1, 1.1)
+
+  result <- withr::with_seed(7, draw_parameters_j(
+    y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
+    jx, gibbs_sampler
+  ))
+  result_informative <- withr::with_seed(7, draw_parameters_j_informative(
+    y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
+    jx, gibbs_sampler, list(list())
+  ))
+
+  # The full vectorized Theta_j: 10 exogenous rows times 2 columns, with the
+  # betas restricted to zero (rows 4 to 10 of the first column) as zeros
+  theta_jw <- result$theta_jw[[1]]
+  expect_identical(dim(theta_jw), dim(result_informative$theta_jw[[1]]))
+  expect_identical(dim(theta_jw), c(20L, 1L))
+  expect_true(all(theta_jw[4:10] == 0))
+  expect_equal(theta_jw[1:3], result$beta_jw[[1]])
+})
+
 test_that("draw_parameters returns correct parameters for equation 1", {
   skip_on_cran()
   y_matrix <- simulated_data$y_matrix
@@ -145,6 +193,32 @@ test_that("draw_parameters_j keeps every nstore-th draw after burn-in", {
   expect_identical(thinned$gamma_jw, unthinned$gamma_jw[seq(3, 18, by = 3)])
 })
 
+test_that("draw_parameters_j gives the same draws for ts and plain matrices", {
+  y_matrix <- simulated_data$y_matrix
+  x_matrix <- simulated_data$x_matrix
+  expect_s3_class(y_matrix, "ts")
+  plain <- function(x) matrix(as.numeric(x), nrow(x), dimnames = dimnames(x))
+
+  run_sampler <- function(y_matrix, x_matrix) {
+    withr::with_seed(
+      7,
+      draw_parameters_j(
+        y_matrix,
+        x_matrix,
+        simulated_data$character_gamma_matrix,
+        simulated_data$character_beta_matrix,
+        1,
+        set_gibbs_spec(ndraws = 20)
+      )
+    )
+  }
+
+  expect_equal(
+    run_sampler(y_matrix, x_matrix),
+    run_sampler(plain(y_matrix), plain(x_matrix))
+  )
+})
+
 # Test Initialize Sampler
 test_that("initialize_sampler correctly maximizes the target target function
 when there is one endogenous variable", {
@@ -161,7 +235,11 @@ when there is one endogenous variable", {
     character_beta_matrix,
     jx,
     crossprod(x_matrix),
-    xbtxb_for(x_matrix, character_beta_matrix, jx)
+    xbtxb_for(x_matrix, character_beta_matrix, jx),
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
   expect_equal(
     result_with_endogenous$gamma_parameters_j,
@@ -179,17 +257,59 @@ when there are no endogenous variables in equation", {
   x_matrix <- simulated_data$x_matrix
   character_gamma_matrix <- simulated_data$character_gamma_matrix
   character_beta_matrix <- simulated_data$character_beta_matrix
-  jx <- 6
+  jx <- 3
 
   result_without_endogenous <- initialize_sampler(
     y_matrix,
     x_matrix,
     character_gamma_matrix,
     character_beta_matrix,
-    jx
+    jx,
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
   expect_identical(result_without_endogenous$gamma_parameters_j, 0)
   expect_identical(result_without_endogenous$cholesky_of_inverse_hessian, NA)
+})
+
+test_that("draw_parameters_j explains why the sampler cannot start", {
+  # A constant endogenous regressor leaves the target flat in gamma, so the
+  # Hessian at the optimum is zero. This used to fail inside solve() with
+  # "Lapack routine dgesv: system is exactly singular".
+  x_matrix <- cbind(1, seq_len(20))
+  y_matrix <- cbind(rep(c(-1, 1), 10) + seq_len(20), rep(3, 20))
+  character_gamma_matrix <- matrix(c("1", "-gamma1_2", "0", "1"), 2)
+  character_beta_matrix <- matrix(
+    c("constant1", "beta1_2", "constant2", "beta2_2"), 2
+  )
+
+  expect_error(
+    draw_parameters_j(
+      y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
+      1, new_gibbs_spec(6, 0.5, 1, 1.1)
+    ),
+    "cannot be started"
+  )
+})
+
+test_that("construct_cholesky_of_inverse_hessian needs a positive definite
+Hessian", {
+  hessian <- matrix(c(4, 1, 1, 2), 2)
+  expect_equal(
+    construct_cholesky_of_inverse_hessian(hessian),
+    t(chol(solve(hessian)))
+  )
+  # not at a maximum in one direction
+  expect_error(
+    construct_cholesky_of_inverse_hessian(matrix(c(4, 0, 0, -1), 2)),
+    "cannot be started"
+  )
+  expect_error(
+    construct_cholesky_of_inverse_hessian(matrix(NaN)),
+    "cannot be started"
+  )
 })
 
 # Test Draw Gamma j
@@ -216,7 +336,11 @@ the one endogenous variable case", {
     tau,
     cholesky_of_inverse_hessian,
     crossprod(x_matrix),
-    xbtxb_for(x_matrix, character_beta_matrix, jx)
+    xbtxb_for(x_matrix, character_beta_matrix, jx),
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
   expect_equal(
     new_gamma_parameters_1,
@@ -247,7 +371,11 @@ the one endogenous variable case", {
     tau,
     cholesky_of_inverse_hessian,
     crossprod(x_matrix),
-    xbtxb_for(x_matrix, character_beta_matrix, jx)
+    xbtxb_for(x_matrix, character_beta_matrix, jx),
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
   expect_equal(
     new_gamma_parameters_1,
@@ -255,14 +383,62 @@ the one endogenous variable case", {
   )
 })
 
+test_that("draw_gamma_j handles a target that is not a number", {
+  y_matrix <- simulated_data$y_matrix
+  x_matrix <- simulated_data$x_matrix
+  character_gamma_matrix <- simulated_data$character_gamma_matrix
+  character_beta_matrix <- simulated_data$character_beta_matrix
+  jx <- 1
+  gamma_parameters_1 <- structure(-0.34996818653039, dim = c(1L, 1L))
+  cholesky_of_inverse_hessian <- structure(0.175744390195533, dim = c(1L, 1L))
+
+  draw <- function() {
+    withr::with_seed(
+      7,
+      draw_gamma_j(
+        y_matrix,
+        x_matrix,
+        character_gamma_matrix,
+        character_beta_matrix,
+        jx,
+        gamma_parameters_1,
+        tau = 1.1,
+        cholesky_of_inverse_hessian,
+        crossprod(x_matrix),
+        xbtxb_for(x_matrix, character_beta_matrix, jx),
+        equation_data = construct_equation_data(
+          y_matrix, x_matrix, character_gamma_matrix,
+          character_beta_matrix, jx
+        )
+      )
+    )
+  }
+  is_current <- function(gamma) isTRUE(all.equal(gamma, gamma_parameters_1))
+
+  # real data does not produce this, so the target is replaced
+  # at the candidate only: the candidate is rejected
+  testthat::local_mocked_bindings(
+    target_j = function(..., gamma_parameters_j) {
+      if (is_current(gamma_parameters_j)) 100 else NaN
+    }
+  )
+  expect_equal(draw(), gamma_parameters_1)
+
+  # at the current value: the chain could never move, so stop
+  testthat::local_mocked_bindings(target_j = function(...) NaN)
+  expect_error(draw(), "not finite at the current")
+  testthat::local_mocked_bindings(target_j = function(...) Inf)
+  expect_error(draw(), "not finite at the current")
+})
+
 test_that("draw_gamma_j returns 0 when there are no endogenous variables", {
   y_matrix <- simulated_data$y_matrix
   x_matrix <- simulated_data$x_matrix
   character_gamma_matrix <- simulated_data$character_gamma_matrix
   character_beta_matrix <- simulated_data$character_beta_matrix
-  jx <- 6
+  jx <- 3
   tau <- 1.1
-  gamma_parameters_6 <- 0
+  gamma_parameters_3 <- 0
   cholesky_of_inverse_hessian <- NA
 
   result <- draw_gamma_j(
@@ -271,9 +447,13 @@ test_that("draw_gamma_j returns 0 when there are no endogenous variables", {
     character_gamma_matrix,
     character_beta_matrix,
     jx,
-    gamma_parameters_6,
+    gamma_parameters_3,
     tau,
-    cholesky_of_inverse_hessian
+    cholesky_of_inverse_hessian,
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
 
   expect_true(is.na(result))
@@ -294,7 +474,11 @@ test_that("draw_omega_j correctly returns the Omega", {
       y_matrix, x_matrix, character_gamma_matrix,
       character_beta_matrix, jx, gamma_parameters_1,
       crossprod(x_matrix),
-      xbtxb_for(x_matrix, character_beta_matrix, jx)
+      xbtxb_for(x_matrix, character_beta_matrix, jx),
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
     )
   )
 
@@ -325,21 +509,33 @@ the one endogenous variables case", {
     0.17, 0.22, 0.22, 0.82
   ), nrow = 2, ncol = 2, byrow = TRUE)
 
+  theta_permutation <- construct_theta_permutation(
+    character_beta_matrix, jx, nrow(character_beta_matrix) * 2
+  )
+
   result <- withr::with_seed(
     7,
     draw_theta_j(
       y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
-      jx, gamma_parameters_j, omega_tilde_jw, crossprod(x_matrix)
+      jx, gamma_parameters_j, omega_tilde_jw, crossprod(x_matrix),
+      theta_permutation = theta_permutation,
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
     )
   )
 
-  expected_result_theta_jw <- c(
+  # theta_jw is the full vectorized Theta_j, with the betas restricted to
+  # zero (rows 4 to 10 of the first column) included as zeros
+  expected_result_theta_jw <- matrix(c(
     1.33785213690464, 0.553200107134962, 0.132042350013386,
+    rep(0, 7),
     0.395058533772247, 0.0262040643823067,
     -0.127070095171351, -0.017387429595745, -0.150109902894841,
     -0.100230761546029, 0.0219065823268252, -0.0852778937502962,
     -0.24161797439946, -0.047251981429159
-  )
+  ), ncol = 1)
 
   expected_result_beta_jw <- c(
     1.33785213690464, 0.553200107134962, 0.132042350013386
@@ -364,24 +560,59 @@ the no endogenous variables case", {
     0.08
   ), nrow = 1, byrow = TRUE)
 
+  theta_permutation <- construct_theta_permutation(
+    character_beta_matrix, jx, nrow(character_beta_matrix)
+  )
+
   result <- withr::with_seed(
     7,
     draw_theta_j(
       y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
-      jx, gamma_parameters_j, omega_tilde_jw, crossprod(x_matrix)
+      jx, gamma_parameters_j, omega_tilde_jw, crossprod(x_matrix),
+      theta_permutation = theta_permutation,
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
     )
-  )
-
-  expected_result_theta_jw <- c(
-    1.62903143338742, -0.577349603700648, 0.501512145598412
   )
 
   expected_result_beta_jw <- c(
     1.62903143338742, -0.577349603700648, 0.501512145598412
   )
 
+  # theta_jw is the full vectorized Theta_j: the free betas sit at their
+  # rows (constant, current_account.L(1), world_gdp), the rest are zero
+  expected_result_theta_jw <- matrix(0, 10, 1)
+  expected_result_theta_jw[c(1, 5, 9)] <- expected_result_beta_jw
+
   expect_equal(result$theta_jw, expected_result_theta_jw)
   expect_equal(result$beta_jw, expected_result_beta_jw)
+})
+
+test_that("draw_theta_j stops on a permutation of the wrong length", {
+  y_matrix <- simulated_data$y_matrix
+  x_matrix <- simulated_data$x_matrix
+  character_gamma_matrix <- simulated_data$character_gamma_matrix
+  character_beta_matrix <- simulated_data$character_beta_matrix
+  jx <- 3
+  # one parameter too many
+  theta_permutation <- construct_theta_permutation(
+    character_beta_matrix, jx, nrow(character_beta_matrix) + 1
+  )
+
+  expect_error(
+    draw_theta_j(
+      y_matrix, x_matrix, character_gamma_matrix, character_beta_matrix,
+      jx, 0, matrix(0.08), crossprod(x_matrix),
+      theta_permutation = theta_permutation,
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
+    ),
+    "permutation"
+  )
 })
 
 # Test Target j
@@ -403,7 +634,11 @@ test_that("target_j correctly computes the target function
     jx,
     parameters,
     crossprod(x_matrix),
-    xbtxb_for(x_matrix, character_beta_matrix, jx)
+    xbtxb_for(x_matrix, character_beta_matrix, jx),
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
 
   # Check that the result is a single double value
@@ -423,7 +658,11 @@ test_that("target_j correctly computes the target function
     jx,
     new_parameters,
     crossprod(x_matrix),
-    xbtxb_for(x_matrix, character_beta_matrix, jx)
+    xbtxb_for(x_matrix, character_beta_matrix, jx),
+    equation_data = construct_equation_data(
+      y_matrix, x_matrix, character_gamma_matrix,
+      character_beta_matrix, jx
+    )
   )
 
   # Check that the result has changed
@@ -440,7 +679,11 @@ test_that("target_j correctly computes the target function
       jx,
       parameters,
       crossprod(x_matrix),
-      xbtxb_for(x_matrix, character_beta_matrix, jx)
+      xbtxb_for(x_matrix, character_beta_matrix, jx),
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
     ),
     "number of gamma parameters"
   )
@@ -454,19 +697,25 @@ test_that("target_j returns NA when there are no gamma parameters
   y_matrix <- simulated_data$y_matrix
   character_gamma_matrix <- simulated_data$character_gamma_matrix
   character_beta_matrix <- simulated_data$character_beta_matrix
-  jx <- 6
+  jx <- 3
 
   parameters <- NA
 
-  suppressWarnings(
+  expect_warning(
     result <- target_j(
       y_matrix,
       x_matrix,
       character_gamma_matrix,
       character_beta_matrix,
       jx,
-      parameters
-    )
+      parameters,
+      equation_data = construct_equation_data(
+        y_matrix, x_matrix, character_gamma_matrix,
+        character_beta_matrix, jx
+      )
+    ),
+    "Equation 3 does not contain any gamma parameters. Returning NA.",
+    fixed = TRUE
   )
 
   expect_true(is.na(result))

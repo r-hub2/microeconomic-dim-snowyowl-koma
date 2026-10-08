@@ -534,19 +534,19 @@ in the equations. Now, we can estimate the model using the
 <span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a><span class="do">## ── Estimation ──────────────────────────────────────────────────────────────────</span></span>
 <span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a><span class="do">## ── ⚠ MCMC Acceptance Probability Warnings ──────────────────────────────────────</span></span>
-<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a><span class="do">## • consumption: 61.1%</span></span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a><span class="do">## • interest_rate: 60.3%</span></span>
 <span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a><span class="do">## ℹ Some acceptance probabilities are outside the recommended range (20%-60%).</span></span>
 <span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a><span class="do">## Consider revising the equations, tuning each equation&#39;s tau, or adjusting your priors.</span></span>
 <span id="cb7-24"><a href="#cb7-24" tabindex="-1"></a><span class="fu">print</span>(estimates)</span>
 <span id="cb7-25"><a href="#cb7-25" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a><span class="do">## ── Estimates ───────────────────────────────────────────────────────────────────</span></span>
-<span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a><span class="do">##     consumption ~  0.36 - 0.02 * gdp  +  0.11 * consumption.L(1)</span></span>
-<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a><span class="do">##      investment ~  0.45  +  0.22 * investment.L(1)</span></span>
-<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a><span class="do">##         exports ~  - 0.28  +  3.18 * world_gdp - 0.29 * exports.L(1)</span></span>
-<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a><span class="do">##         imports ~  - 0.04  +  2.59 * domestic_demand - 0.1 * imports.L(1)</span></span>
+<span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a><span class="do">##     consumption ~  0.36 - 0.02 * gdp  +  0.1 * consumption.L(1)</span></span>
+<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a><span class="do">##      investment ~  0.45  +  0.21 * investment.L(1)</span></span>
+<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a><span class="do">##         exports ~  - 0.3  +  3.17 * world_gdp - 0.29 * exports.L(1)</span></span>
+<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a><span class="do">##         imports ~  - 0.04  +  2.63 * domestic_demand - 0.12 * imports.L(1)</span></span>
 <span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a><span class="do">##          prices ~  0.03  +  0.03 * exchange_rate  +  0.01 * oil_price  +  0.56 * prices.L(1)</span></span>
-<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a><span class="do">##   interest_rate ~  - 0.51  +  0.52 * prices  +  0.57 * interest_rate_germany - 0.22 * prices.L(1)</span></span>
+<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a><span class="do">##   interest_rate ~  - 0.52  +  0.54 * prices  +  0.57 * interest_rate_germany - 0.23 * prices.L(1)</span></span>
 <span id="cb7-33"><a href="#cb7-33" tabindex="-1"></a><span class="do">##             gdp == 0.6 * consumption  +  0.6 * domestic_demand  +  0.5 * exports - 0.4 * imports</span></span>
 <span id="cb7-34"><a href="#cb7-34" tabindex="-1"></a><span class="do">## domestic_demand == 0.6 * consumption  +  0.4 * investment</span></span></code></pre></div>
 <div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">summary</span>(estimates)</span>
@@ -554,32 +554,32 @@ in the equations. Now, we can estimate the model using the
 <span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="do">## ===============================================================================================================</span></span>
 <span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="do">##                        consumption    investment    exports         imports        prices        interest_rate </span></span>
 <span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="do">## ---------------------------------------------------------------------------------------------------------------</span></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="do">## constant                 0.36          0.45          -0.28           -0.04          0.03          -0.51        </span></span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="do">##                        [ 0.27; 0.45]  [0.19; 0.72]  [-0.85;  0.30]  [-0.52; 0.48]  [0.00; 0.06]  [-0.63; -0.39]</span></span>
-<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="do">## consumption.L(1)         0.11                                                                                  </span></span>
-<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="do">##                        [-0.07; 0.30]                                                                           </span></span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="do">## constant                 0.36          0.45          -0.30           -0.04          0.03          -0.52        </span></span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="do">##                        [ 0.27; 0.45]  [0.19; 0.71]  [-0.85;  0.25]  [-0.55; 0.48]  [0.01; 0.06]  [-0.64; -0.40]</span></span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="do">## consumption.L(1)         0.10                                                                                  </span></span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="do">##                        [-0.08; 0.30]                                                                           </span></span>
 <span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="do">## gdp                     -0.02                                                                                  </span></span>
-<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="do">##                        [-0.11; 0.07]                                                                           </span></span>
-<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a><span class="do">## investment.L(1)                        0.22                                                                    </span></span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="do">##                        [-0.10; 0.07]                                                                           </span></span>
+<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a><span class="do">## investment.L(1)                        0.21                                                                    </span></span>
 <span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a><span class="do">##                                       [0.03; 0.40]                                                             </span></span>
 <span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a><span class="do">## exports.L(1)                                         -0.29                                                     </span></span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="do">##                                                     [-0.46; -0.13]                                             </span></span>
-<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a><span class="do">## world_gdp                                             3.18                                                     </span></span>
-<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a><span class="do">##                                                     [ 2.28;  4.07]                                             </span></span>
-<span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a><span class="do">## imports.L(1)                                                         -0.10                                     </span></span>
-<span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a><span class="do">##                                                                     [-0.27; 0.06]                              </span></span>
-<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a><span class="do">## domestic_demand                                                       2.59                                     </span></span>
-<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a><span class="do">##                                                                     [ 1.49; 3.51]                              </span></span>
-<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a><span class="do">## prices.L(1)                                                                         0.56          -0.22        </span></span>
-<span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a><span class="do">##                                                                                    [0.46; 0.66]  [-0.65;  0.20]</span></span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="do">##                                                     [-0.44; -0.11]                                             </span></span>
+<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a><span class="do">## world_gdp                                             3.17                                                     </span></span>
+<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a><span class="do">##                                                     [ 2.30;  4.06]                                             </span></span>
+<span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a><span class="do">## imports.L(1)                                                         -0.12                                     </span></span>
+<span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a><span class="do">##                                                                     [-0.28; 0.06]                              </span></span>
+<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a><span class="do">## domestic_demand                                                       2.63                                     </span></span>
+<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a><span class="do">##                                                                     [ 1.46; 3.79]                              </span></span>
+<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a><span class="do">## prices.L(1)                                                                         0.56          -0.23        </span></span>
+<span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a><span class="do">##                                                                                    [0.46; 0.65]  [-0.62;  0.16]</span></span>
 <span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a><span class="do">## exchange_rate                                                                       0.03                       </span></span>
 <span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a><span class="do">##                                                                                    [0.02; 0.05]                </span></span>
 <span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a><span class="do">## oil_price                                                                           0.01                       </span></span>
 <span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a><span class="do">##                                                                                    [0.01; 0.01]                </span></span>
 <span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a><span class="do">## interest_rate_germany                                                                              0.57        </span></span>
 <span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a><span class="do">##                                                                                                  [ 0.52;  0.62]</span></span>
-<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a><span class="do">## prices                                                                                             0.52        </span></span>
-<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a><span class="do">##                                                                                                  [ 0.07;  1.03]</span></span>
+<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a><span class="do">## prices                                                                                             0.54        </span></span>
+<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a><span class="do">##                                                                                                  [ 0.13;  1.01]</span></span>
 <span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a><span class="do">## ===============================================================================================================</span></span>
 <span id="cb8-33"><a href="#cb8-33" tabindex="-1"></a><span class="do">## Posterior mean (90% credible interval: [5.0%, 95.0%])</span></span>
 <span id="cb8-34"><a href="#cb8-34" tabindex="-1"></a><span class="do">## Estimation period: 1996 Q1 - 2019 Q4</span></span></code></pre></div>
@@ -589,8 +589,8 @@ in the equations. Now, we can estimate the model using the
 <span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="do">##                  investment  </span></span>
 <span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a><span class="do">## -----------------------------</span></span>
 <span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a><span class="do">## constant          0.45       </span></span>
-<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a><span class="do">##                  [0.19; 0.72]</span></span>
-<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a><span class="do">## investment.L(1)   0.22       </span></span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a><span class="do">##                  [0.19; 0.71]</span></span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a><span class="do">## investment.L(1)   0.21       </span></span>
 <span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a><span class="do">##                  [0.03; 0.40]</span></span>
 <span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a><span class="do">## =============================</span></span>
 <span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a><span class="do">## Posterior mean (90% credible interval: [5.0%, 95.0%])</span></span>
@@ -640,25 +640,25 @@ This function will generate forecasts for the specified date range.</p>
 <span id="cb13-19"><a href="#cb13-19" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb13-20"><a href="#cb13-20" tabindex="-1"></a><span class="do">## series:</span></span>
 <span id="cb13-21"><a href="#cb13-21" tabindex="-1"></a><span class="do">##         consumption investment exports imports  prices interest_rate    gdp</span></span>
-<span id="cb13-22"><a href="#cb13-22" tabindex="-1"></a><span class="do">## 2023 Q1      0.3783     0.4633  1.2163  0.8693 -0.0604        0.8370 0.7348</span></span>
-<span id="cb13-23"><a href="#cb13-23" tabindex="-1"></a><span class="do">## 2023 Q2      0.3991     0.5732  0.6727  1.1056 -0.0710        1.2612 0.4149</span></span>
-<span id="cb13-24"><a href="#cb13-24" tabindex="-1"></a><span class="do">## 2023 Q3      0.3746     0.6284  0.8891  1.0194  0.0125        1.5693 0.5473</span></span>
-<span id="cb13-25"><a href="#cb13-25" tabindex="-1"></a><span class="do">## 2023 Q4      0.3867     0.5874  0.3326  1.0904 -0.0133        1.6839 0.2423</span></span>
+<span id="cb13-22"><a href="#cb13-22" tabindex="-1"></a><span class="do">## 2023 Q1      0.3894     0.5985  1.3908  1.0573 -0.0560        0.8380 0.7899</span></span>
+<span id="cb13-23"><a href="#cb13-23" tabindex="-1"></a><span class="do">## 2023 Q2      0.3865     0.5830  0.6862  1.0478 -0.0763        1.2262 0.4349</span></span>
+<span id="cb13-24"><a href="#cb13-24" tabindex="-1"></a><span class="do">## 2023 Q3      0.4042     0.5884  0.7509  1.0625  0.0045        1.6103 0.4797</span></span>
+<span id="cb13-25"><a href="#cb13-25" tabindex="-1"></a><span class="do">## 2023 Q4      0.4056     0.5977  0.3789  1.1053 -0.0162        1.6975 0.2802</span></span>
 <span id="cb13-26"><a href="#cb13-26" tabindex="-1"></a><span class="do">##         domestic_demand world_gdp interest_rate_germany exchange_rate oil_price</span></span>
-<span id="cb13-27"><a href="#cb13-27" tabindex="-1"></a><span class="do">## 2023 Q1          0.4123    0.4827                2.3887        0.9217   -8.7520</span></span>
-<span id="cb13-28"><a href="#cb13-28" tabindex="-1"></a><span class="do">## 2023 Q2          0.4688    0.4083                3.1460       -1.3863   -3.3787</span></span>
-<span id="cb13-29"><a href="#cb13-29" tabindex="-1"></a><span class="do">## 2023 Q3          0.4761    0.4259                3.6393       -1.7869    9.9001</span></span>
-<span id="cb13-30"><a href="#cb13-30" tabindex="-1"></a><span class="do">## 2023 Q4          0.4670    0.2906                3.8850       -0.7502   -3.3373</span></span></code></pre></div>
+<span id="cb13-27"><a href="#cb13-27" tabindex="-1"></a><span class="do">## 2023 Q1          0.4730    0.4827                2.3887        0.9217   -8.7520</span></span>
+<span id="cb13-28"><a href="#cb13-28" tabindex="-1"></a><span class="do">## 2023 Q2          0.4651    0.4083                3.1460       -1.3863   -3.3787</span></span>
+<span id="cb13-29"><a href="#cb13-29" tabindex="-1"></a><span class="do">## 2023 Q3          0.4779    0.4259                3.6393       -1.7869    9.9001</span></span>
+<span id="cb13-30"><a href="#cb13-30" tabindex="-1"></a><span class="do">## 2023 Q4          0.4825    0.2906                3.8850       -0.7502   -3.3373</span></span></code></pre></div>
 <div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="fu">rate</span>(forecasts<span class="sc">$</span>mean<span class="sc">$</span>gdp)</span>
 <span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a><span class="do">## &lt;koma_ts&gt;</span></span>
 <span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a><span class="do">## attributes:</span></span>
 <span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a><span class="do">##   series_type:  chr &quot;rate&quot;</span></span>
 <span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a><span class="do">##   method:  chr &quot;diff_log&quot;</span></span>
-<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a><span class="do">##   anker:  num [1:2] 192542 2023</span></span>
+<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a><span class="do">##   anker:  num [1:2] 192296 2023</span></span>
 <span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a><span class="do">## series:</span></span>
 <span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a><span class="do">##           Qtr1      Qtr2      Qtr3      Qtr4</span></span>
-<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a><span class="do">## 2023 0.7347755 0.4148554 0.5472566 0.2423238</span></span>
+<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a><span class="do">## 2023 0.7899071 0.4348824 0.4797441 0.2801660</span></span>
 <span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a><span class="fu">level</span>(forecasts<span class="sc">$</span>mean<span class="sc">$</span>gdp)</span>
 <span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a><span class="do">## &lt;koma_ts&gt;</span></span>
 <span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a><span class="do">## attributes:</span></span>
@@ -667,8 +667,8 @@ This function will generate forecasts for the specified date range.</p>
 <span id="cb14-16"><a href="#cb14-16" tabindex="-1"></a><span class="do">## </span></span>
 <span id="cb14-17"><a href="#cb14-17" tabindex="-1"></a><span class="do">## series:</span></span>
 <span id="cb14-18"><a href="#cb14-18" tabindex="-1"></a><span class="do">##          Qtr1     Qtr2     Qtr3     Qtr4</span></span>
-<span id="cb14-19"><a href="#cb14-19" tabindex="-1"></a><span class="do">## 2022                            192542.2</span></span>
-<span id="cb14-20"><a href="#cb14-20" tabindex="-1"></a><span class="do">## 2023 193962.2 194768.5 195837.3 196312.5</span></span></code></pre></div>
+<span id="cb14-19"><a href="#cb14-19" tabindex="-1"></a><span class="do">## 2022                            192295.7</span></span>
+<span id="cb14-20"><a href="#cb14-20" tabindex="-1"></a><span class="do">## 2023 193820.7 194665.4 195601.6 196150.4</span></span></code></pre></div>
 <div id="conditional-forecasting" class="section level2">
 <h2>Conditional Forecasting</h2>
 <p>Conditional forecasting allows you to impose restrictions on certain

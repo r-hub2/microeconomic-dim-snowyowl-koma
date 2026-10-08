@@ -44,8 +44,8 @@ test_that("system_of_equations", {
   expected_identities <-
     list(gdp = list(
       equation = "gdp==0.6*manufacturing+0.4*service",
-      components = list(manufacturing = "theta6_4", service = "theta6_5"),
-      weights = list(theta6_4 = 0.6, theta6_5 = 0.4),
+      components = list(manufacturing = "theta_gamma6_4", service = "theta_gamma6_5"),
+      weights = list(theta_gamma6_4 = 0.6, theta_gamma6_5 = 0.4),
       matrix = c("gamma", "gamma")
     ))
   expect_identical(
@@ -56,7 +56,7 @@ test_that("system_of_equations", {
     "1", "0", "0", "0", "0", "-gamma1_6", "0", "1", "0",
     "0", "0", "-gamma2_6", "0", "0", "1", "0", "0", "0", "0", "0",
     "0", "1", "0", "0", "0", "0", "0", "0", "1", "-gamma5_6", "0",
-    "0", "0", "-theta6_4", "-theta6_5", "1"
+    "0", "0", "-theta_gamma6_4", "-theta_gamma6_5", "1"
   ), dim = c(6L, 6L), dimnames = list(
     c(
       "consumption", "investment", "current_account", "manufacturing",
@@ -116,6 +116,55 @@ test_that("system_of_equations", {
   result
   print(result)
   format(result)
+})
+
+test_that("format.koma_seq shows the priors stored in the system", {
+  equations <- "consumption ~ {0,1000}1 + {0.4,0.1}gdp + consumption.L(1:2) + {3,0.001},
+gdp == 0.5*consumption + 0.5*x"
+  result <- system_of_equations(equations, exogenous_variables = "x")
+  out <- cli::ansi_strip(format(result))
+
+  expect_match(
+    out[1],
+    "~  {0, 1000} constant + {0.4, 0.1} gdp + consumption.L(1) + consumption.L(2) + {3, 0.001}",
+    fixed = TRUE
+  )
+  # identities have no priors and are printed as before
+  expect_match(out[2], "== 0.5 * consumption + 0.5 * x", fixed = TRUE)
+
+  # priors changed after the system was created show up in the print
+  result$priors[[1]][["consumption.L(1)"]] <- list(0.9, 10)
+  result$priors[[1]]$gdp <- NULL
+  out <- cli::ansi_strip(format(result))
+  expect_match(
+    out[1],
+    "~  {0, 1000} constant + gdp + {0.9, 10} consumption.L(1) + consumption.L(2) + {3, 0.001}",
+    fixed = TRUE
+  )
+})
+
+test_that("format.koma_seq shows the equation settings stored in the system", {
+  equations <- "consumption ~ gdp + {3,0.001} [tau=1.2, ndraws=100],
+service ~ gdp,
+gdp == 0.5*consumption + 0.5*service"
+  result <- system_of_equations(equations)
+  out <- cli::ansi_strip(format(result))
+
+  expect_match(
+    out[1], "~  constant + gdp + {3, 0.001} [tau = 1.2, ndraws = 100]",
+    fixed = TRUE
+  )
+  # equations without settings are printed as before
+  expect_match(out[2], "~  constant \\+ gdp\\s*$")
+  expect_match(out[3], "== 0.5 * consumption + 0.5 * service", fixed = TRUE)
+
+  # settings changed after the system was created show up in the print
+  result$equation_settings$consumption <- list()
+  result$equation_settings$service <- list(tau = 0.5)
+  out <- cli::ansi_strip(format(result))
+  expect_match(out[1], "~  constant + gdp + {3, 0.001}", fixed = TRUE)
+  expect_no_match(out[1], "[", fixed = TRUE)
+  expect_match(out[2], "~  constant + gdp [tau = 0.5]", fixed = TRUE)
 })
 
 test_that("system_of_equation", {
@@ -1171,6 +1220,34 @@ equation-specific setting", {
 
   expect_equal(result$equations, "y~constant+x1+covid_1+covid_2")
   expect_equal(result$equation_settings$y$tau, 1.2)
+})
+
+test_that("expand_dummies repeats a prior for every dummy", {
+  expect_equal(
+    expand_dummies("y~x1+{0,1}dummies(covid,1:2)"),
+    "y~x1+{0,1}covid_1+{0,1}covid_2"
+  )
+  # a prior on another term stays where it is
+  expect_equal(
+    expand_dummies("y~{2,3}x1+dummies(covid,1:2)"),
+    "y~{2,3}x1+covid_1+covid_2"
+  )
+})
+
+test_that("system_of_equations applies a prior to every dummy in dummies()", {
+  result <- system_of_equations(
+    "y ~ x1 + {0.5, 2} dummies(covid, 1:3)",
+    exogenous_variables = c("x1", paste0("covid_", 1:3))
+  )
+
+  expect_equal(
+    result$priors[[1]],
+    list(
+      covid_1 = list(0.5, 2),
+      covid_2 = list(0.5, 2),
+      covid_3 = list(0.5, 2)
+    )
+  )
 })
 
 test_that("no settings yields empty list", {

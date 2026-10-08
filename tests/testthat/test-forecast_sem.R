@@ -20,8 +20,8 @@ test_that("forecast_sem", {
   dates <- dates_to_num(dates, frequency = 4)
 
   # Define identity weights
-  sys_eq$identities$gdp$weights$theta6_4 <- 0.5
-  sys_eq$identities$gdp$weights$theta6_5 <- 0.5
+  sys_eq$identities$gdp$weights$theta_gamma6_4 <- 0.5
+  sys_eq$identities$gdp$weights$theta_gamma6_5 <- 0.5
 
   # Forecast horizon
   horizon <- length(seq(dates$forecast$start, dates$forecast$end, by = 1 / 4))
@@ -58,10 +58,10 @@ test_that("forecast_sem", {
 
   expected_result <- structure(
     c(
-      5.04104607100856, 4.7708005173572, 5.01602359998076,
-      4.06003947968627, 0.541094781344398, 1.13145534077617, 0.450303373639633,
-      0.540847907446731, 0.116717828312384, -0.119322631598908, 0.283510600976009,
-      0.210762637923912
+      5.06362194561031, 4.80313168078516, 5.01077864344463,
+      4.05315146122831, 0.542600872899129, 1.13132240196818, 0.451589786047729,
+      0.542166813873791, 0.113673001423857, -0.120928186359856, 0.282631393735793,
+      0.210619313756968
     ),
     dim = c(2L, 6L),
     dimnames = list(
@@ -197,16 +197,40 @@ test_that("validate_identities is quiet when identities match", {
   )
 })
 
-test_that("validate_identities can use exogenous x_matrix", {
+test_that("validate_identities warns on deviations with exogenous x_matrix", {
+  ts_out <- stats::ts(
+    cbind(agg = c(4, 5), c1 = c(1, 2)),
+    start = c(2023, 2), frequency = 4
+  )
+  x_matrix <- cbind(x1 = c(2, 3))
+  identities <- list(
+    agg = list(
+      components = list(c1 = "w1", x1 = "w2"),
+      weights = list(w1 = 1, w2 = 1)
+    )
+  )
+
+  # Only the first horizon violates agg == c1 + x1.
+  expect_warning(
+    validate_identities(ts_out, identities, x_matrix = x_matrix),
+    'Identity "agg" not satisfied at horizon "1"'
+  )
+})
+
+test_that("validate_identities uses distinct endogenous and exogenous weights", {
+  sys_eq <- system_of_equations(
+    "a ~ x1, b ~ a, y == 0.3*b + 0.7*x1",
+    exogenous_variables = "x1"
+  )
   mat <- matrix(
     c(
-      3, 1,
-      5, 2
+      1.7, 1,
+      2.7, 2
     ),
     ncol = 2,
     byrow = TRUE
   )
-  colnames(mat) <- c("agg", "c1")
+  colnames(mat) <- c("y", "b")
   ts_out <- stats::ts(mat, start = c(2023, 2), frequency = 4)
 
   x_matrix <- matrix(c(2, 3), ncol = 1)
@@ -214,12 +238,7 @@ test_that("validate_identities can use exogenous x_matrix", {
 
   expect_silent(
     validate_identities(ts_out,
-      identities = list(
-        agg = list(
-          components = list(c1 = "w1", x1 = "w2"),
-          weights = list(w1 = 1, w2 = 1)
-        )
-      ),
+      identities = sys_eq$identities,
       x_matrix = x_matrix
     )
   )

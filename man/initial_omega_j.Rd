@@ -12,7 +12,8 @@ initial_omega_j(
   jx,
   gamma_jw,
   xtx,
-  xbtxb
+  xbtxb,
+  equation_data
 )
 }
 \arguments{
@@ -45,11 +46,14 @@ Gibbs draws, so it is computed once instead of on every call.}
 \item{xbtxb}{Precomputed \eqn{x_b'x_b}, where \eqn{x_b} is
 \eqn{x_matrix} restricted to the columns kept for equation \eqn{j}. Same
 rationale as \code{xtx}.}
+
+\item{equation_data}{Fixed equation subsets and counts returned by
+\code{\link[=construct_equation_data]{construct_equation_data()}}. The samplers compute this once per equation.}
 }
 \value{
-The function returns the evaluation of the target function,
-which is used to decide whether to accept or reject proposed states
-in the MH algorithm. Returns NA if there are no gamma parameters.
+A \eqn{((1 + n_j) \times (1 + n_j))} matrix with the initial value
+for \eqn{\Omega_j}, the residual covariance at the initial
+\eqn{\gamma_j}. Returns NA if the endogenous regressors contain NA.
 }
 \description{
 \code{initial_omega_j} computes OLS quantity for initial omega_j using initialized

@@ -12,7 +12,10 @@ draw_theta_j(
   jx,
   gamma_parameters_j,
   omega_tilde_jw,
-  xtx
+  xtx,
+  inverse_xtx = solve(xtx),
+  theta_permutation,
+  equation_data
 )
 }
 \arguments{
@@ -41,6 +44,15 @@ equation \eqn{j}.}
 
 \item{xtx}{Precomputed \eqn{x_matrix'x_matrix}. This is invariant across
 Gibbs draws, so it is computed once instead of on every call.}
+
+\item{inverse_xtx}{Precomputed inverse of \eqn{x_matrix'x_matrix}. Same
+rationale as \code{xtx}.}
+
+\item{theta_permutation}{Precomputed order of the elements of theta, as
+returned by \code{\link[=construct_theta_permutation]{construct_theta_permutation()}}. Same rationale as \code{xtx}.}
+
+\item{equation_data}{Fixed equation subsets and counts returned by
+\code{\link[=construct_equation_data]{construct_equation_data()}}. The samplers compute this once per equation.}
 }
 \value{
 List containing theta_jw and beta_jw

@@ -50,7 +50,19 @@ model_identification <- function(character_gamma_matrix,
   if (any(is.na(gamma_vec))) {
     return(TRUE)
   }
-  beta_vec <- beta_vectorization(character_beta_matrix)
+  beta_vec <- beta_vectorization(character_beta_matrix, identity_weights)
+
+  # The check draws random parameter values. Restore the state of the random
+  # number generator afterwards, so the check does not change later draws.
+  old_seed <- get0(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit(
+    if (!is.null(old_seed)) {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    },
+    add = TRUE
+  )
 
   # Compute Gamma matrix
   gamma_parameters <- multivariate_norm(
@@ -66,23 +78,29 @@ model_identification <- function(character_gamma_matrix,
   )
 
   # Compute Beta matrix
-  beta_parameters <- multivariate_norm(
-    n = 1,
-    matrix(0, dim(beta_vec$transformation_matrix)[2], 1),
-    diag(dim(beta_vec$transformation_matrix)[2]) * 0.5
-  )
+  number_of_betas <- dim(beta_vec$transformation_matrix)[2]
+  if (number_of_betas > 0) {
+    beta_parameters <- multivariate_norm(
+      n = 1,
+      matrix(0, number_of_betas, 1),
+      diag(number_of_betas) * 0.5
+    )
+  } else {
+    # No lagged or exogenous variables besides the constant
+    beta_parameters <- matrix(0, 0, 1)
+  }
   beta_matrix <- vector_to_matrix(
     beta_vec$transformation_matrix,
     beta_parameters,
     beta_vec$constant_vector,
     nrow = number_of_exogenous, ncol = number_of_endogenous
   )
-  # Drop intercept from B matrix
-  beta_matrix <- beta_matrix[-1, ]
-
-  # number of exogenous variables (minus intercept)
-  number_of_exogenous <- number_of_exogenous - 1
-  number_of_identities <- length(identity_weights)
+  # The constants are not beta parameters. Draw a value for each equation
+  # that has one, so an excluded constant counts as an exclusion restriction.
+  is_constant <- grepl("^constant[0-9]+$", character_beta_matrix)
+  beta_matrix[is_constant] <- stats::rnorm(sum(is_constant))
+  # A variable that no equation uses is not excluded from any of them
+  beta_matrix <- beta_matrix[rowSums(beta_matrix != 0) > 0, , drop = FALSE]
 
   identity_positions <- which(
     colnames(character_beta_matrix) %in% names(identity_weights)
@@ -110,42 +128,64 @@ model_identification <- function(character_gamma_matrix,
 
     rr <- rbind(gammas, betas)
     r <- rr[rr[, j] == 0, -j, drop = FALSE]
+    rank <- qr(r)$rank
+    required_rank <- number_of_endogenous - 1
     rank_all[[i]] <- list(
-      "Fullfilled" = qr(r)$rank == (number_of_endogenous - 1),
-      "Rank" = qr(r)$rank
+      fulfilled = rank == required_rank,
+      message = cli::pluralize("rank {rank}, required {required_rank}")
     )
+    # Order condition: the number of excluded lagged or exogenous variables
+    # must be at least the number of endogenous regressors
+    endogenous_regressors <- sum(gamma_matrix[, j] != 0) - 1
+    excluded_predetermined <- sum(beta_matrix[, j] == 0)
     order_all[[i]] <- list(
-      "Fullfilled" = dim(r)[2] <= dim(r)[1],
-      "# included endogenous" = dim(r)[2],
-      "# excluded exogenous" = dim(r)[1]
+      fulfilled = endogenous_regressors <= excluded_predetermined,
+      message = cli::pluralize(
+        "{endogenous_regressors} endogenous regressor{?s},
+        {excluded_predetermined} excluded lagged or exogenous variable{?s}"
+      )
     )
   }
   names(rank_all) <-
     setdiff(colnames(character_beta_matrix), names(identity_weights))
   names(order_all) <- names(rank_all)
 
-  check_condition <- function(mat, condition_name, call = rlang::caller_env()) {
-    if (sum(do.call(cbind, do.call(cbind, mat)[1, ])) !=
-      (number_of_endogenous - number_of_identities)) {
-      cli::cli({
-        cli::cli_alert_danger(
-          c(
-            "The specified model is not identified because the {condition_name}
-           condition is not satisfied!"
-          )
-        )
-        cli::cli_verbatim(c(utils::capture.output(do.call(rbind, mat)), "\n"))
-      })
-      # throw the error
-      cli::cli_abort(
-        "Model identification error: {condition_name} condition not satisfied.",
-        call = call
-      )
+  check_condition <- function(checks, condition_name, hint,
+                              call = rlang::caller_env()) {
+    failed <- Filter(function(check) !check$fulfilled, checks)
+    if (length(failed) == 0) {
+      return(invisible(TRUE))
     }
+
+    equations <- vapply(
+      names(failed),
+      function(name) paste0("{.field ", name, "}: ", failed[[name]]$message),
+      character(1)
+    )
+    names(equations) <- rep("x", length(equations))
+
+    cli::cli_abort(
+      c(
+        "Model identification error: {condition_name} condition not satisfied.",
+        equations,
+        "i" = hint
+      ),
+      call = call
+    )
   }
 
-  check_condition(order_all, "order", call = call)
-  check_condition(rank_all, "rank", call = call)
+  check_condition(
+    order_all, "order",
+    "An equation needs at least as many excluded lagged or exogenous variables
+    as endogenous regressors.",
+    call = call
+  )
+  check_condition(
+    rank_all, "rank",
+    "The variables excluded from an equation must enter the other equations
+    with linearly independent coefficients.",
+    call = call
+  )
 
   return(TRUE)
 }
@@ -235,6 +275,8 @@ find_dependent_columns <- function(x_matrix, tol = 1e-7) {
 gamma_vectorization <- function(character_gamma_matrix, identity_weights) {
   number_of_endogenous <- ncol(character_gamma_matrix)
   character_vector <- c(character_gamma_matrix)
+  # Parameter names without the leading minus sign
+  parameter_names <- gsub("^-", "", character_vector)
 
   parameters <- get_parameters(character_gamma_matrix, "gamma")
 
@@ -248,7 +290,7 @@ gamma_vectorization <- function(character_gamma_matrix, identity_weights) {
 
   for (ix in seq_along(parameters)) {
     transformation_matrix[
-      grep(parameters[ix], character_vector), ix
+      parameter_names == parameters[ix], ix
     ] <- -1
   }
 
@@ -262,7 +304,7 @@ gamma_vectorization <- function(character_gamma_matrix, identity_weights) {
 
   for (ix in seq_along(theta_parameters)) {
     constant_vector[
-      grep(theta_parameters[ix], character_vector)
+      parameter_names == theta_parameters[ix]
     ] <- theta_parameters[ix]
   }
 
@@ -295,16 +337,19 @@ gamma_vectorization <- function(character_gamma_matrix, identity_weights) {
 adjust_constant_vector <- function(constant_vector, identity_weights) {
   # Iterate through indices in identity_weights
   for (idx in seq_along(identity_weights)) {
-    # Get the names of elements in identity_weights at the current index
-    weight_name <- names(identity_weights[[idx]]$weights)
-    for (ix in weight_name) {
+    weights <- identity_weights[[idx]]$weights
+    for (ix in seq_along(weights)) {
       # Find matching elements in constant_vector
-      matches <- grep(ix, constant_vector)
+      matches <- which(constant_vector == names(weights)[ix])
 
       if (length(matches) > 0) {
+        value <- suppressWarnings(as.numeric(weights[[ix]]))
+        # A weight that is not resolved yet is unknown, but not zero
+        if (anyNA(value)) {
+          value <- 1
+        }
         # Replace with corresponding numeric value
-        constant_vector[matches] <-
-          -as.numeric(identity_weights[[idx]]$weights[ix])
+        constant_vector[matches] <- -value
       }
     }
   }
@@ -323,6 +368,8 @@ adjust_constant_vector <- function(constant_vector, identity_weights) {
 #'
 #' @param character_beta_matrix A character matrix representing the
 #'   beta structure of the model.
+#' @param identity_weights A list of identity weights for adjusting
+#'   constant vectors.
 #' @return A list with three elements:
 #'   \describe{
 #'     \item{transformation_matrix}{A numeric matrix used for parameter
@@ -331,10 +378,12 @@ adjust_constant_vector <- function(constant_vector, identity_weights) {
 #'     \item{constant_vector}{A numeric vector for constant terms.}
 #'   }
 #' @keywords internal
-beta_vectorization <- function(character_beta_matrix) {
+beta_vectorization <- function(character_beta_matrix, identity_weights) {
   number_of_exogenous <- nrow(character_beta_matrix)
   number_of_endogenous <- ncol(character_beta_matrix)
   character_vector <- c(character_beta_matrix)
+  # Parameter names without the leading minus sign
+  parameter_names <- gsub("^-", "", character_vector)
 
   parameters <- get_parameters(character_beta_matrix, "beta")
 
@@ -343,12 +392,21 @@ beta_vectorization <- function(character_beta_matrix) {
     0, number_of_endogenous * number_of_exogenous, length(parameters)
   )
   for (ix in seq_along(parameters)) {
-    transformation_matrix[grep(parameters[ix], character_vector), ix] <- 1
+    transformation_matrix[parameter_names == parameters[ix], ix] <- 1
   }
 
-  # constant_vector in numeric
+  theta_parameters <- get_parameters(character_beta_matrix, "theta")
+  # constant_vector in character form
   constant_vector <- matrix(0, number_of_endogenous * number_of_exogenous, 1)
-  # constant_vector[grep("theta", character_vector)]
+
+  for (ix in seq_along(theta_parameters)) {
+    constant_vector[
+      parameter_names == theta_parameters[ix]
+    ] <- theta_parameters[ix]
+  }
+
+  # Identity weights enter the beta matrix with a positive sign
+  constant_vector <- -adjust_constant_vector(constant_vector, identity_weights)
 
   return(list(
     transformation_matrix = transformation_matrix,
@@ -397,8 +455,9 @@ get_parameters <- function(character_matrix, pattern) {
   elements <- gsub("^-", "", elements)
 
   # Use grep to find all elements that start with the given prefix
+  prefix <- if (pattern == "theta") "theta(_gamma|_beta)?" else pattern
   matching_elements <- grep(
-    paste0("^", pattern, "([0-9]*_[0-9]*)"), elements,
+    paste0("^", prefix, "([0-9]*_[0-9]*)"), elements,
     value = TRUE
   )
 

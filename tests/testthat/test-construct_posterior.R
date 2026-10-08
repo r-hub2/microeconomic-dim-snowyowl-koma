@@ -106,6 +106,44 @@ test_that("construct_posterior posterior matrices are not complete", {
   )
 })
 
+test_that("construct_posterior validates sigma_matrix before using it", {
+  system_of_equations <- simulated_data[c(
+    "equations", "endogenous_variables", "total_exogenous_variables",
+    "character_gamma_matrix", "character_beta_matrix"
+  )]
+  system_of_equations$identities <- list(
+    gdp = list(
+      equation = "gdp==manufacturing+service",
+      components = list(
+        manufacturing = "theta6_4", service = "theta6_5"
+      ),
+      weights = list(
+        theta6_4 = 0.5,
+        theta6_5 = 0.5
+      ),
+      matrix = c("gamma", "gamma")
+    )
+  )
+  estimate <- extract_estimates_from_draws(
+    system_of_equations, simulated_data$estimates
+  )
+  phi_positions <- find_phi_positions(system_of_equations)
+
+  with_sigma <- function(sigma_matrix) {
+    estimate$sigma_matrix <- sigma_matrix
+    construct_posterior(system_of_equations, estimate, phi_positions)
+  }
+  sigma_matrix <- estimate$sigma_matrix
+
+  expect_error(with_sigma(diag(sigma_matrix)), "must be a matrix")
+  expect_error(with_sigma(sigma_matrix[, 1:5]), "must be square")
+  expect_error(with_sigma(sigma_matrix[1:5, 1:5]), "incompatible")
+
+  # gdp is an identity and must not have a variance
+  sigma_matrix[6, 6] <- 1
+  expect_error(with_sigma(sigma_matrix), "zero variance")
+})
+
 test_that("construct_posterior returns estimates for draw jx", {
   system_of_equations <- list(
     endogenous_variables = NULL,
@@ -232,6 +270,32 @@ test_that("construct_posterior returns estimates for draw jx", {
   expect_identical(result$beta_matrix, expected_beta_matrix)
   expect_identical(unname(result$sigma_matrix), expected_sigma_matrix)
   expect_identical(result$phi_matrix, expected_phi_matrix)
+})
+
+test_that("mixed dynamic identity weights produce numeric model coefficients", {
+  sys_eq <- system_of_equations(
+    "a ~ x1, b ~ a, y == (nom_b)*b + (nom_x1)*x1",
+    exogenous_variables = "x1"
+  )
+  identities <- update_identity_weights(
+    list(y = list(b = 0.3, x1 = 0.7)),
+    sys_eq$identities
+  )
+  gamma_matrix <- diag(3)
+  dimnames(gamma_matrix) <- dimnames(sys_eq$character_gamma_matrix)
+  beta_matrix <- matrix(
+    0, nrow = nrow(sys_eq$character_beta_matrix),
+    ncol = ncol(sys_eq$character_beta_matrix),
+    dimnames = dimnames(sys_eq$character_beta_matrix)
+  )
+
+  coefficients <- update_estimates_with_weights(
+    identities, gamma_matrix, beta_matrix
+  )
+
+  expect_identical(coefficients$gamma_matrix["b", "y"], -0.3)
+  expect_true(is.numeric(coefficients$beta_matrix))
+  expect_identical(coefficients$beta_matrix["x1", "y"], 0.7)
 })
 
 test_that("update_estimates_with_weights", {
@@ -454,6 +518,70 @@ test_that("construct_phi correctly returns phi matrix", {
   result <- construct_phi(find_phi_positions(sys_eq), beta_matrix)
 
   expect_identical(result, expected_phi)
+})
+
+# Phi matrices from a beta matrix that numbers its cells column by column, so
+# every coefficient can be told apart.
+phi_from_numbered_beta <- function(equations) {
+  sys_eq <- system_of_equations(equations, "x")
+  character_beta_matrix <- sys_eq$character_beta_matrix
+  beta_matrix <- matrix(
+    as.numeric(seq_along(character_beta_matrix)),
+    nrow = nrow(character_beta_matrix),
+    dimnames = dimnames(character_beta_matrix)
+  )
+  construct_phi(find_phi_positions(sys_eq), beta_matrix)
+}
+
+test_that("construct_phi finds a lag that an earlier equation does not use", {
+  # beta rows: constant, a.L(1), a.L(2), x
+  result <- phi_from_numbered_beta("a ~ a.L(1) + x, b ~ a.L(2) + x")
+
+  expect_identical(result, list(
+    `1` = matrix(c(2, 0, 0, 0), 2, 2),
+    `2` = matrix(c(0, 0, 7, 0), 2, 2)
+  ))
+})
+
+test_that("construct_phi tells apart variables that share a prefix", {
+  # beta rows: constant, gdp.L(1), gdp_ch.L(1), x
+  result <- phi_from_numbered_beta(
+    "gdp ~ gdp.L(1) + x, gdp_ch ~ gdp_ch.L(1) + x"
+  )
+
+  expect_identical(result, list(`1` = matrix(c(2, 0, 0, 7), 2, 2)))
+})
+
+test_that("construct_phi handles digits in names and lags above 9", {
+  # beta rows: constant, m2.L(1), y.L(12), x
+  result <- phi_from_numbered_beta("m2 ~ m2.L(1) + x, y ~ y.L(12) + x")
+
+  zero <- matrix(0, 2, 2)
+  expected <- c(
+    list(matrix(c(2, 0, 0, 0), 2, 2)),
+    rep(list(zero), 10),
+    list(matrix(c(0, 0, 0, 7), 2, 2))
+  )
+  names(expected) <- as.character(1:12)
+
+  expect_identical(result, expected)
+})
+
+test_that("construct_phi returns the lags in order", {
+  # beta rows: constant, a.L(2), b.L(1), x
+  result <- phi_from_numbered_beta("a ~ a.L(2) + x, b ~ b.L(1) + x")
+
+  expect_identical(result, list(
+    `1` = matrix(c(0, 0, 0, 7), 2, 2),
+    `2` = matrix(c(2, 0, 0, 0), 2, 2)
+  ))
+})
+
+test_that("find_phi_positions needs the character beta matrix", {
+  sys_eq <- system_of_equations("a ~ a.L(1) + x, b ~ a.L(2) + x", "x")
+  sys_eq$character_beta_matrix <- NULL
+
+  expect_error(find_phi_positions(sys_eq), "character_beta_matrix")
 })
 
 test_that("construct_phi with lagged identity", {
