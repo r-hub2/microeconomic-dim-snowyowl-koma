@@ -521,7 +521,7 @@ windows.</p>
 <span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a><span class="co">#&gt; ── Estimation ──────────────────────────────────────────────────────────────────</span></span>
 <span id="cb7-18"><a href="#cb7-18" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb7-19"><a href="#cb7-19" tabindex="-1"></a><span class="co">#&gt; ── ⚠ MCMC Acceptance Probability Warnings ──────────────────────────────────────</span></span>
-<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a><span class="co">#&gt; • consumption: 60.9%</span></span>
+<span id="cb7-20"><a href="#cb7-20" tabindex="-1"></a><span class="co">#&gt; • consumption: 60.7%</span></span>
 <span id="cb7-21"><a href="#cb7-21" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb7-22"><a href="#cb7-22" tabindex="-1"></a><span class="co">#&gt; ℹ Some acceptance probabilities are outside the recommended range (20%-60%).</span></span>
 <span id="cb7-23"><a href="#cb7-23" tabindex="-1"></a><span class="co">#&gt; Consider revising the equations, tuning each equation&#39;s tau, or adjusting your priors.</span></span>
@@ -529,9 +529,9 @@ windows.</p>
 <span id="cb7-25"><a href="#cb7-25" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a><span class="co">#&gt; ── Estimates ───────────────────────────────────────────────────────────────────</span></span>
 <span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a><span class="co">#&gt;         consumption ~  0.35 - 0.01 * gdp  +  0.11 * consumption.L(1)</span></span>
-<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a><span class="co">#&gt;          investment ~  0.45  +  0.21 * investment.L(1)</span></span>
-<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a><span class="co">#&gt;             exports ~  - 1093.58  +  2.89 * world_gdp - 0.2 * exports.L(1) - 0.24 * exports_level.L(1)  +  0.56 * world_gdp_level.L(1)  +  0.06 * exchange_rate_level.L(1)</span></span>
-<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a><span class="co">#&gt;             imports ~  - 0.11  +  0.02 * exports  +  1.78 * consumption  +  0.96 * investment - 0.15 * imports.L(1)</span></span>
+<span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a><span class="co">#&gt;          investment ~  0.45  +  0.22 * investment.L(1)</span></span>
+<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a><span class="co">#&gt;             exports ~  - 1078.47  +  2.88 * world_gdp - 0.2 * exports.L(1) - 0.24 * exports_level.L(1)  +  0.55 * world_gdp_level.L(1)  +  0.06 * exchange_rate_level.L(1)</span></span>
+<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a><span class="co">#&gt;             imports ~  - 0.08  +  0.01 * exports  +  1.71 * consumption  +  0.96 * investment - 0.14 * imports.L(1)</span></span>
 <span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a><span class="co">#&gt;                 gdp == 0.6 * consumption  +  0.6 * domestic_demand  +  0.5 * exports - 0.4 * imports</span></span>
 <span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a><span class="co">#&gt;     domestic_demand == 0.6 * consumption  +  0.4 * investment</span></span>
 <span id="cb7-33"><a href="#cb7-33" tabindex="-1"></a><span class="co">#&gt;       exports_level == 1 * exports  +  1 * exports_level.L(1)</span></span>
@@ -542,18 +542,18 @@ windows.</p>
 <span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a><span class="co">#&gt; =============================================</span></span>
 <span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="co">#&gt;                           exports            </span></span>
 <span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="co">#&gt; ---------------------------------------------</span></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="co">#&gt; constant                   -1093.58          </span></span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="co">#&gt;                           [-1722.43; -485.36]</span></span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="co">#&gt; constant                   -1078.47          </span></span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="co">#&gt;                           [-1674.16; -466.92]</span></span>
 <span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="co">#&gt; exports.L(1)                  -0.20          </span></span>
 <span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="co">#&gt;                           [   -0.37;   -0.03]</span></span>
 <span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="co">#&gt; exports_level.L(1)            -0.24          </span></span>
-<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="co">#&gt;                           [   -0.39;   -0.11]</span></span>
-<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a><span class="co">#&gt; world_gdp_level.L(1)           0.56          </span></span>
-<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a><span class="co">#&gt;                           [    0.25;    0.87]</span></span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a><span class="co">#&gt;                           [   -0.38;   -0.10]</span></span>
+<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a><span class="co">#&gt; world_gdp_level.L(1)           0.55          </span></span>
+<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a><span class="co">#&gt;                           [    0.24;    0.85]</span></span>
 <span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a><span class="co">#&gt; exchange_rate_level.L(1)       0.06          </span></span>
 <span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a><span class="co">#&gt;                           [    0.01;    0.11]</span></span>
-<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a><span class="co">#&gt; world_gdp                      2.89          </span></span>
-<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a><span class="co">#&gt;                           [    1.97;    3.75]</span></span>
+<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a><span class="co">#&gt; world_gdp                      2.88          </span></span>
+<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a><span class="co">#&gt;                           [    1.99;    3.76]</span></span>
 <span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a><span class="co">#&gt; =============================================</span></span>
 <span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a><span class="co">#&gt; Posterior mean (90% credible interval: [5.0%, 95.0%])</span></span>
 <span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a><span class="co">#&gt; Estimation period: 1996 Q1 - 2019 Q4</span></span></code></pre></div>
@@ -569,12 +569,12 @@ windows.</p>
 <span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>    long_run_world_gdp,</span>
 <span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a>    long_run_exchange_rate</span>
 <span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>)</span>
-<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a><span class="co">#&gt; [1] &quot;Adjustment speed: -0.243, Long-run world GDP: 2.289, Exchange rate: 0.253&quot;</span></span></code></pre></div>
+<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a><span class="co">#&gt; [1] &quot;Adjustment speed: -0.240, Long-run world GDP: 2.288, Exchange rate: 0.256&quot;</span></span></code></pre></div>
 <p>The adjustment speed is -0.24, which is negative and implies about
 24% of the gap closes each period. The long-run elasticities imply that
 a 1% rise in world GDP is associated with roughly 2.29% higher exports
 in the long run, while a 1% increase in the exchange-rate index implies
-0.25% higher exports if higher values indicate depreciation (here the
+0.26% higher exports if higher values indicate depreciation (here the
 exchange rate is CHF/EUR, so higher values mean depreciation; flip the
 sign if the index is defined the other way).</p>
 </div>
@@ -604,23 +604,23 @@ sign if the index is defined the other way).</p>
 <span id="cb10-22"><a href="#cb10-22" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb10-23"><a href="#cb10-23" tabindex="-1"></a><span class="co">#&gt; series:</span></span>
 <span id="cb10-24"><a href="#cb10-24" tabindex="-1"></a><span class="co">#&gt;         consumption investment exports imports    gdp domestic_demand</span></span>
-<span id="cb10-25"><a href="#cb10-25" tabindex="-1"></a><span class="co">#&gt; 2023 Q1      0.3667     0.3130  0.8074  0.8787 0.4794          0.3453</span></span>
-<span id="cb10-26"><a href="#cb10-26" tabindex="-1"></a><span class="co">#&gt; 2023 Q2      0.3805     0.5145  0.6767  0.8815 0.4745          0.4341</span></span>
-<span id="cb10-27"><a href="#cb10-27" tabindex="-1"></a><span class="co">#&gt; 2023 Q3      0.3880     0.6727  0.7860  1.1156 0.4807          0.5019</span></span>
-<span id="cb10-28"><a href="#cb10-28" tabindex="-1"></a><span class="co">#&gt; 2023 Q4      0.3865     0.5824  0.2872  0.9269 0.2836          0.4649</span></span>
-<span id="cb10-29"><a href="#cb10-29" tabindex="-1"></a><span class="co">#&gt; 2024 Q1      0.3947     0.5739  0.9398  0.9521 0.6057          0.4664</span></span>
-<span id="cb10-30"><a href="#cb10-30" tabindex="-1"></a><span class="co">#&gt; 2024 Q2      0.4009     0.5335  0.6123  1.1009 0.3787          0.4540</span></span>
-<span id="cb10-31"><a href="#cb10-31" tabindex="-1"></a><span class="co">#&gt; 2024 Q3      0.4018     0.6058  1.2067  0.9002 0.7744          0.4834</span></span>
-<span id="cb10-32"><a href="#cb10-32" tabindex="-1"></a><span class="co">#&gt; 2024 Q4      0.3990     0.6068  0.5969  1.2281 0.3359          0.4821</span></span>
+<span id="cb10-25"><a href="#cb10-25" tabindex="-1"></a><span class="co">#&gt; 2023 Q1      0.3580     0.3167  0.7969  0.8671 0.4713          0.3414</span></span>
+<span id="cb10-26"><a href="#cb10-26" tabindex="-1"></a><span class="co">#&gt; 2023 Q2      0.3875     0.5038  0.6544  0.9714 0.4316          0.4340</span></span>
+<span id="cb10-27"><a href="#cb10-27" tabindex="-1"></a><span class="co">#&gt; 2023 Q3      0.3996     0.5911  0.6680  0.8398 0.5235          0.4762</span></span>
+<span id="cb10-28"><a href="#cb10-28" tabindex="-1"></a><span class="co">#&gt; 2023 Q4      0.3853     0.5195  0.4521  0.9384 0.3453          0.4390</span></span>
+<span id="cb10-29"><a href="#cb10-29" tabindex="-1"></a><span class="co">#&gt; 2024 Q1      0.3848     0.5216  0.9738  0.9707 0.5933          0.4395</span></span>
+<span id="cb10-30"><a href="#cb10-30" tabindex="-1"></a><span class="co">#&gt; 2024 Q2      0.3865     0.6017  0.5358  0.9513 0.4028          0.4726</span></span>
+<span id="cb10-31"><a href="#cb10-31" tabindex="-1"></a><span class="co">#&gt; 2024 Q3      0.3821     0.6064  1.1773  0.9037 0.7395          0.4718</span></span>
+<span id="cb10-32"><a href="#cb10-32" tabindex="-1"></a><span class="co">#&gt; 2024 Q4      0.3932     0.5105  0.7109  0.9449 0.4775          0.4401</span></span>
 <span id="cb10-33"><a href="#cb10-33" tabindex="-1"></a><span class="co">#&gt;         exports_level world_gdp_level exchange_rate_level world_gdp</span></span>
-<span id="cb10-34"><a href="#cb10-34" tabindex="-1"></a><span class="co">#&gt; 2023 Q1      1168.903        2474.282             -0.7646    0.4827</span></span>
-<span id="cb10-35"><a href="#cb10-35" tabindex="-1"></a><span class="co">#&gt; 2023 Q2      1169.580        2474.690             -2.1510    0.4083</span></span>
-<span id="cb10-36"><a href="#cb10-36" tabindex="-1"></a><span class="co">#&gt; 2023 Q3      1170.366        2475.116             -3.9379    0.4259</span></span>
-<span id="cb10-37"><a href="#cb10-37" tabindex="-1"></a><span class="co">#&gt; 2023 Q4      1170.653        2475.407             -4.6881    0.2906</span></span>
-<span id="cb10-38"><a href="#cb10-38" tabindex="-1"></a><span class="co">#&gt; 2024 Q1      1171.593        2475.865             -5.2093    0.4586</span></span>
-<span id="cb10-39"><a href="#cb10-39" tabindex="-1"></a><span class="co">#&gt; 2024 Q2      1172.205        2476.261             -2.6797    0.3955</span></span>
-<span id="cb10-40"><a href="#cb10-40" tabindex="-1"></a><span class="co">#&gt; 2024 Q3      1173.412        2476.770             -4.9959    0.5096</span></span>
-<span id="cb10-41"><a href="#cb10-41" tabindex="-1"></a><span class="co">#&gt; 2024 Q4      1174.009        2477.210             -6.6168    0.4393</span></span>
+<span id="cb10-34"><a href="#cb10-34" tabindex="-1"></a><span class="co">#&gt; 2023 Q1      1168.893        2474.282             -0.7646    0.4827</span></span>
+<span id="cb10-35"><a href="#cb10-35" tabindex="-1"></a><span class="co">#&gt; 2023 Q2      1169.547        2474.690             -2.1510    0.4083</span></span>
+<span id="cb10-36"><a href="#cb10-36" tabindex="-1"></a><span class="co">#&gt; 2023 Q3      1170.215        2475.116             -3.9379    0.4259</span></span>
+<span id="cb10-37"><a href="#cb10-37" tabindex="-1"></a><span class="co">#&gt; 2023 Q4      1170.667        2475.407             -4.6881    0.2906</span></span>
+<span id="cb10-38"><a href="#cb10-38" tabindex="-1"></a><span class="co">#&gt; 2024 Q1      1171.641        2475.865             -5.2093    0.4586</span></span>
+<span id="cb10-39"><a href="#cb10-39" tabindex="-1"></a><span class="co">#&gt; 2024 Q2      1172.177        2476.261             -2.6797    0.3955</span></span>
+<span id="cb10-40"><a href="#cb10-40" tabindex="-1"></a><span class="co">#&gt; 2024 Q3      1173.354        2476.770             -4.9959    0.5096</span></span>
+<span id="cb10-41"><a href="#cb10-41" tabindex="-1"></a><span class="co">#&gt; 2024 Q4      1174.065        2477.210             -6.6168    0.4393</span></span>
 <span id="cb10-42"><a href="#cb10-42" tabindex="-1"></a><span class="co">#&gt;         exchange_rate</span></span>
 <span id="cb10-43"><a href="#cb10-43" tabindex="-1"></a><span class="co">#&gt; 2023 Q1        0.9217</span></span>
 <span id="cb10-44"><a href="#cb10-44" tabindex="-1"></a><span class="co">#&gt; 2023 Q2       -1.3863</span></span>
@@ -639,8 +639,8 @@ sign if the index is defined the other way).</p>
 <span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a><span class="co">#&gt; series:</span></span>
 <span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a><span class="co">#&gt;           Qtr1      Qtr2      Qtr3      Qtr4</span></span>
-<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a><span class="co">#&gt; 2023 0.8074204 0.6767415 0.7859517 0.2872063</span></span>
-<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="co">#&gt; 2024 0.9398171 0.6122637 1.2066791 0.5969435</span></span>
+<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a><span class="co">#&gt; 2023 0.7969181 0.6544045 0.6679957 0.4521240</span></span>
+<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="co">#&gt; 2024 0.9738402 0.5358405 1.1772697 0.7108966</span></span>
 <span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a><span class="fu">level</span>(forecasts<span class="sc">$</span>mean<span class="sc">$</span>exports)</span>
 <span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a><span class="co">#&gt; &lt;koma_ts&gt;</span></span>
 <span id="cb11-14"><a href="#cb11-14" tabindex="-1"></a><span class="co">#&gt; attributes:</span></span>
@@ -650,8 +650,8 @@ sign if the index is defined the other way).</p>
 <span id="cb11-18"><a href="#cb11-18" tabindex="-1"></a><span class="co">#&gt; series:</span></span>
 <span id="cb11-19"><a href="#cb11-19" tabindex="-1"></a><span class="co">#&gt;          Qtr1     Qtr2     Qtr3     Qtr4</span></span>
 <span id="cb11-20"><a href="#cb11-20" tabindex="-1"></a><span class="co">#&gt; 2022                            118297.6</span></span>
-<span id="cb11-21"><a href="#cb11-21" tabindex="-1"></a><span class="co">#&gt; 2023 119256.6 120066.4 121013.8 121361.8</span></span>
-<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="co">#&gt; 2024 122507.8 123260.2 124756.5 125503.5</span></span></code></pre></div>
+<span id="cb11-21"><a href="#cb11-21" tabindex="-1"></a><span class="co">#&gt; 2023 119244.1 120027.0 120831.4 121379.0</span></span>
+<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a><span class="co">#&gt; 2024 122566.8 123225.3 124684.6 125574.1</span></span></code></pre></div>
 </div>
 
 

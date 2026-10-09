@@ -1,6 +1,6 @@
 Package: koma
 Title: Bayesian Simultaneous Equation Models for Forecasting
-Version: 0.4.0
+Version: 0.4.1
 Authors@R: c(
     person("Samad", "Sarferaz", , "sarferaz@kof.ethz.ch", role = c("aut", "cph"), comment = c(ORCID = "0000-0001-9283-3293")),
     person("Merlin", "Scherer", , "scherer@kof.ethz.ch", role = c("aut", "cre", "cph"), comment = c(ORCID = "0009-0005-7479-168X")),
@@ -37,7 +37,7 @@ VignetteBuilder: knitr
 BugReports: https://github.com/TimothyMerlin/koma/issues
 Config/roxygen2/version: 8.0.0
 NeedsCompilation: no
-Packaged: 2026-10-08 20:38:13 UTC; tischere
+Packaged: 2026-10-09 08:58:57 UTC; tischere
 Author: Samad Sarferaz [aut, cph] (ORCID:
     <https://orcid.org/0000-0001-9283-3293>),
   Merlin Scherer [aut, cre, cph] (ORCID:
